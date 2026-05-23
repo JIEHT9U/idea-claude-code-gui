@@ -16,7 +16,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
@@ -83,7 +82,7 @@ class ClaudeQueryExecutor {
             // L4 fix: register with ProcessManager so cleanupAllProcesses sees this
             // child on IDE shutdown. Without it, a hung sync query leaked the node
             // process for the lifetime of the IDE.
-            String channelId = "claude-query-sync-" + UUID.randomUUID();
+            String channelId = ProcessManager.newChannelId("claude-query-sync");
             Process process = null;
             try {
                 process = pb.start();
@@ -211,7 +210,7 @@ class ClaudeQueryExecutor {
                 // to cleanupAllProcesses on IDE shutdown — every stalled stream query
                 // leaked a node process. We now register before any I/O and unregister
                 // in the finally block, with force-kill as the last-resort cleanup.
-                String channelId = "claude-query-stream-" + UUID.randomUUID();
+                String channelId = ProcessManager.newChannelId("claude-query-stream");
                 Process process = null;
                 try {
                     process = pb.start();

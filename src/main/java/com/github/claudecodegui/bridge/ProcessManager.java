@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
@@ -24,6 +25,19 @@ public class ProcessManager {
 
     private final Map<String, Process> activeChannelProcesses = new ConcurrentHashMap<>();
     private final Set<String> interruptedChannels = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Generates a unique channel ID by appending a random UUID to {@code prefix}.
+     *
+     * <p>Use this when registering a short-lived child process whose channel
+     * has no natural identifier (one-shot RPC calls, helper scripts, etc.).
+     * A unique suffix is mandatory: see {@code CodexSDKBridge#getMcpServerTools}
+     * (L10 fix) for why constant channel IDs corrupt the registry under
+     * concurrent calls.
+     */
+    public static String newChannelId(String prefix) {
+        return prefix + "-" + UUID.randomUUID();
+    }
 
     /**
      * Registers an active process.

@@ -12,7 +12,6 @@ import java.io.BufferedWriter;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -23,6 +22,9 @@ import java.util.concurrent.TimeUnit;
 public class InputHistoryHandler {
 
     private static final Logger LOG = Logger.getInstance(InputHistoryHandler.class);
+
+    /** Hard wall-clock timeout for the input-history Node.js child process. */
+    private static final long PROCESS_TIMEOUT_SECONDS = 30;
 
     private final HandlerContext context;
 
@@ -187,7 +189,7 @@ public class InputHistoryHandler {
 
         // L7 fix: register with ProcessManager so cleanupAllProcesses sees this child.
         ProcessManager processManager = context.getClaudeSDKBridge().getProcessManager();
-        String channelId = "input-history-" + UUID.randomUUID();
+        String channelId = ProcessManager.newChannelId("input-history");
         Process process = null;
         try {
             process = pb.start();
@@ -210,10 +212,10 @@ public class InputHistoryHandler {
                 }
             }
 
-            boolean finished = process.waitFor(30, TimeUnit.SECONDS);
+            boolean finished = process.waitFor(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             if (!finished) {
                 PlatformUtils.terminateProcess(process);
-                throw new Exception("Node.js process timeout after 30 seconds");
+                throw new Exception("Node.js process timeout after " + PROCESS_TIMEOUT_SECONDS + " seconds");
             }
 
             int exitCode = process.exitValue();

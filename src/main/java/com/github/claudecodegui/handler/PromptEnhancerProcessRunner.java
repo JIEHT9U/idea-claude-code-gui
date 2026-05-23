@@ -9,8 +9,9 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
-import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
@@ -68,7 +69,7 @@ final class PromptEnhancerProcessRunner {
             long readerDrainSeconds,
             Consumer<String> lineHandler
     ) throws IOException, InterruptedException, TimeoutException {
-        String channelId = "prompt-enhancer-" + UUID.randomUUID();
+        String channelId = ProcessManager.newChannelId("prompt-enhancer");
         Process process = null;
         CompletableFuture<Void> readerFuture = null;
         try {
@@ -93,9 +94,14 @@ final class PromptEnhancerProcessRunner {
                     while ((line = reader.readLine()) != null) {
                         lineHandler.accept(line);
                     }
-                } catch (Exception e) {
-                    // Expected when stream is force-closed on timeout kill.
-                    LOG.debug("[PromptEnhancer] reader thread ended: " + e.getMessage());
+                } catch (IOException e) {
+                    // Expected when the stream is force-closed on timeout kill.
+                    // Kept at debug so the happy-path log stays clean.
+                    LOG.debug("[PromptEnhancer] reader stream closed: " + e.getMessage());
+                } catch (RuntimeException e) {
+                    // Anything else — lineHandler NPE, charset issue, etc. — is a
+                    // real bug we must not swallow. Log with stack trace.
+                    LOG.warn("[PromptEnhancer] reader thread failed unexpectedly", e);
                 }
             });
 
@@ -114,8 +120,16 @@ final class PromptEnhancerProcessRunner {
             } catch (TimeoutException te) {
                 LOG.warn("[PromptEnhancer] Reader didn't drain within "
                         + readerDrainSeconds + "s, continuing with partial output");
-            } catch (Exception ignored) {
-                // ExecutionException from reader thread already logged above.
+            } catch (ExecutionException ee) {
+                // The reader thread threw — root cause already logged inside the
+                // async block. Surface it at debug so the chain is traceable but
+                // not noisy.
+                LOG.debug("[PromptEnhancer] Reader execution failed: "
+                        + (ee.getCause() != null ? ee.getCause().getMessage() : ee.getMessage()));
+            } catch (CancellationException ce) {
+                // We only cancel readerFuture in the finally block below, which
+                // runs after this try. A cancellation here would be unexpected.
+                LOG.debug("[PromptEnhancer] Reader was cancelled unexpectedly");
             }
             return exitCode;
 

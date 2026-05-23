@@ -526,6 +526,14 @@ async function processRequest(request) {
   // their parent was gone. 3s tightens the worst-case orphan duration. The
   // check itself is a cheap kill(pid, 0) syscall + a comparison, so the
   // increased polling rate is negligible overhead.
+  //
+  // Tuning guide:
+  //  - Lower (e.g. 1000)  → faster orphan detection at the cost of more wakeups.
+  //                         Useful when many concurrent daemons are expected.
+  //  - Higher (e.g. 10000) → matches the legacy behaviour; orphans may persist
+  //                         briefly visible in `ps`/`Activity Monitor`.
+  //  - Don't go below 500: `setInterval` precision degrades and the wakeup
+  //                         overhead starts to dominate on low-power machines.
   const PPID_CHECK_INTERVAL_MS = 3000;
   const initialPpid = process.ppid;
   const ppidMonitor = setInterval(() => {

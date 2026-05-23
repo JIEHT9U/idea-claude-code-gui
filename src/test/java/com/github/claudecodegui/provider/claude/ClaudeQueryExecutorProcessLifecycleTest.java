@@ -5,6 +5,7 @@ import com.github.claudecodegui.bridge.NodeDetector;
 import com.github.claudecodegui.bridge.ProcessManager;
 import com.github.claudecodegui.provider.common.MessageCallback;
 import com.github.claudecodegui.provider.common.SDKResult;
+import com.github.claudecodegui.testing.TrackingProcessManager;
 import com.google.gson.Gson;
 import org.junit.Before;
 import org.junit.Test;
@@ -16,8 +17,6 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -47,32 +46,6 @@ import static org.junit.Assert.assertTrue;
  * contract we care about is identical whether the child succeeds or fails.
  */
 public class ClaudeQueryExecutorProcessLifecycleTest {
-
-    /** ProcessManager that records register/unregister calls. */
-    private static class TrackingProcessManager extends ProcessManager {
-        final AtomicInteger registerCalls = new AtomicInteger();
-        final AtomicInteger unregisterCalls = new AtomicInteger();
-        final AtomicReference<String> lastRegisteredChannelId = new AtomicReference<>();
-        final AtomicReference<String> lastUnregisteredChannelId = new AtomicReference<>();
-        final AtomicReference<Process> registeredProcess = new AtomicReference<>();
-        final AtomicReference<Process> unregisteredProcess = new AtomicReference<>();
-
-        @Override
-        public void registerProcess(String channelId, Process process) {
-            registerCalls.incrementAndGet();
-            lastRegisteredChannelId.set(channelId);
-            registeredProcess.set(process);
-            super.registerProcess(channelId, process);
-        }
-
-        @Override
-        public void unregisterProcess(String channelId, Process process) {
-            unregisterCalls.incrementAndGet();
-            lastUnregisteredChannelId.set(channelId);
-            unregisteredProcess.set(process);
-            super.unregisterProcess(channelId, process);
-        }
-    }
 
     /** Returns the path to the JVM running this test — a guaranteed-present binary. */
     private static String javaExecutable() {

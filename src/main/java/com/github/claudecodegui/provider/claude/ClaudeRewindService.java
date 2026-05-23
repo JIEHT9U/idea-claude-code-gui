@@ -10,13 +10,16 @@ import com.intellij.openapi.diagnostic.Logger;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 /**
@@ -25,6 +28,11 @@ import java.util.function.Supplier;
 class ClaudeRewindService {
 
     private static final String CHANNEL_SCRIPT = "channel-manager.js";
+
+    /** Hard wall-clock timeout for the rewind Node.js process. */
+    private static final long REWIND_TIMEOUT_SECONDS = 60;
+    /** Grace window for the async reader thread to drain stdout after the child exits. */
+    private static final long READER_DRAIN_SECONDS = 5;
 
     private final Logger log;
     private final Gson gson;
@@ -92,8 +100,12 @@ class ClaudeRewindService {
                 envConfigurator.updateProcessEnvironment(pb, node);
 
                 // L6 fix: register with ProcessManager so cleanupAllProcesses sees this child.
-                String channelId = "claude-rewind-" + UUID.randomUUID();
+                // M3 fix: explicit reader drain mirroring PromptEnhancerProcessRunner so
+                // reader exceptions are categorised (IOException = expected on kill;
+                // RuntimeException = real bug) instead of being swallowed wholesale.
+                String channelId = ProcessManager.newChannelId("claude-rewind");
                 Process process = null;
+                CompletableFuture<String> outputFuture = null;
                 boolean finished = false;
                 int exitCode = -1;
                 try {
@@ -104,7 +116,7 @@ class ClaudeRewindService {
                     ClaudeBridgeUtils.writeStdin(stdinJson, process);
 
                     final Process finalProcess = process;
-                    CompletableFuture<String> outputFuture = CompletableFuture.supplyAsync(() -> {
+                    outputFuture = CompletableFuture.supplyAsync(() -> {
                         StringBuilder output = new StringBuilder();
                         try (BufferedReader reader = new BufferedReader(
                                 new InputStreamReader(finalProcess.getInputStream(), StandardCharsets.UTF_8))) {
@@ -113,12 +125,16 @@ class ClaudeRewindService {
                                 log.info("[Rewind] Output: " + line);
                                 output.append(line).append("\n");
                             }
-                        } catch (Exception ignored) {
+                        } catch (IOException e) {
+                            // Expected when the stream is force-closed on timeout kill.
+                            log.debug("[Rewind] reader stream closed: " + e.getMessage());
+                        } catch (RuntimeException e) {
+                            log.warn("[Rewind] reader thread failed unexpectedly", e);
                         }
                         return output.toString();
                     });
 
-                    finished = process.waitFor(60, TimeUnit.SECONDS);
+                    finished = process.waitFor(REWIND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
                     if (!finished) {
                         PlatformUtils.terminateProcess(process);
                         exitCode = -1;
@@ -127,12 +143,7 @@ class ClaudeRewindService {
                     }
                     log.info("[Rewind] Process exited with code: " + exitCode);
 
-                    String outputStr;
-                    try {
-                        outputStr = outputFuture.get(5, TimeUnit.SECONDS).trim();
-                    } catch (Exception e) {
-                        outputStr = "";
-                    }
+                    String outputStr = drainReader(outputFuture);
 
                     String jsonStr = outputExtractor.extractLastJsonLine(outputStr);
                     if (jsonStr != null) {
@@ -157,6 +168,9 @@ class ClaudeRewindService {
                         }
                         processManager.unregisterProcess(channelId, process);
                     }
+                    if (outputFuture != null && !outputFuture.isDone()) {
+                        outputFuture.cancel(true);
+                    }
                 }
             } catch (Exception e) {
                 log.error("[Rewind] Exception: " + e.getMessage(), e);
@@ -165,6 +179,38 @@ class ClaudeRewindService {
                 return response;
             }
         });
+    }
+
+    /**
+     * Drains the async reader future with categorised failure handling.
+     *
+     * <p>{@link TimeoutException} means stdout is still flowing past the drain
+     * window — accept partial output rather than block indefinitely.
+     * {@link ExecutionException} means the reader thread itself threw; the
+     * root cause has already been logged inside the async block, so we
+     * surface only a short message here.
+     * {@link CancellationException} would only occur if the finally block ran
+     * before this method, which the control flow prevents — log defensively.
+     */
+    private String drainReader(CompletableFuture<String> outputFuture) {
+        try {
+            return outputFuture.get(READER_DRAIN_SECONDS, TimeUnit.SECONDS).trim();
+        } catch (TimeoutException te) {
+            log.warn("[Rewind] Reader didn't drain within " + READER_DRAIN_SECONDS
+                    + "s, continuing with partial output");
+            return "";
+        } catch (ExecutionException ee) {
+            log.debug("[Rewind] Reader execution failed: "
+                    + (ee.getCause() != null ? ee.getCause().getMessage() : ee.getMessage()));
+            return "";
+        } catch (CancellationException ce) {
+            log.debug("[Rewind] Reader was cancelled unexpectedly");
+            return "";
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            log.debug("[Rewind] Reader drain interrupted");
+            return "";
+        }
     }
 
 }

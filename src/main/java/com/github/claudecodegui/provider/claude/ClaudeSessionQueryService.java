@@ -20,7 +20,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -137,7 +136,7 @@ class ClaudeSessionQueryService {
         envConfigurator.updateProcessEnvironment(pb, node);
 
         // L5 fix: register with ProcessManager so cleanupAllProcesses sees this child.
-        String channelId = "claude-session-query-" + UUID.randomUUID();
+        String channelId = ProcessManager.newChannelId("claude-session-query");
         Process process = null;
         StringBuilder output = new StringBuilder();
         try {

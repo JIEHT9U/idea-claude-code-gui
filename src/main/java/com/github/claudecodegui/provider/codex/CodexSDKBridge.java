@@ -10,6 +10,7 @@ import com.github.claudecodegui.settings.CodemossSettingsService;
 import com.github.claudecodegui.i18n.ClaudeCodeGuiBundle;
 import com.github.claudecodegui.dependency.DependencyManager;
 import com.github.claudecodegui.bridge.NodeDetector;
+import com.github.claudecodegui.bridge.ProcessManager;
 import com.github.claudecodegui.provider.common.BaseSDKBridge;
 import com.github.claudecodegui.provider.common.MessageCallback;
 import com.github.claudecodegui.provider.common.SDKResult;
@@ -24,7 +25,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -613,7 +613,7 @@ public class CodexSDKBridge extends BaseSDKBridge {
             // ConcurrentHashMap, leaving the displaced entry leaked (no path could
             // unregister it because the lookup key now points to the newer
             // Process). UUID suffix makes each call independent.
-            String channelId = "__codex_mcp_tools__-" + UUID.randomUUID();
+            String channelId = ProcessManager.newChannelId("__codex_mcp_tools__");
             Process process = null;
             long startTime = System.currentTimeMillis();
             LOG.info("[CodexMcpTools] Starting getMcpServerTools, serverId=" + serverId);

@@ -1,16 +1,14 @@
 package com.github.claudecodegui.handler;
 
 import com.github.claudecodegui.bridge.ProcessManager;
+import com.github.claudecodegui.testing.TrackingProcessManager;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -34,32 +32,6 @@ import static org.junit.Assert.fail;
  * {@code sleep}/{@code cat}/{@code echo}.
  */
 public class PromptEnhancerProcessRunnerTest {
-
-    /** A pass-through {@link ProcessManager} that records register/unregister calls. */
-    private static class TrackingProcessManager extends ProcessManager {
-        final AtomicReference<String> registeredChannelId = new AtomicReference<>();
-        final AtomicReference<Process> registeredProcess = new AtomicReference<>();
-        final AtomicReference<String> unregisteredChannelId = new AtomicReference<>();
-        final AtomicReference<Process> unregisteredProcess = new AtomicReference<>();
-        volatile int registerCalls = 0;
-        volatile int unregisterCalls = 0;
-
-        @Override
-        public void registerProcess(String channelId, Process process) {
-            registerCalls++;
-            registeredChannelId.set(channelId);
-            registeredProcess.set(process);
-            super.registerProcess(channelId, process);
-        }
-
-        @Override
-        public void unregisterProcess(String channelId, Process process) {
-            unregisterCalls++;
-            unregisteredChannelId.set(channelId);
-            unregisteredProcess.set(process);
-            super.unregisterProcess(channelId, process);
-        }
-    }
 
     private TrackingProcessManager pm;
 
@@ -108,15 +80,15 @@ public class PromptEnhancerProcessRunnerTest {
         assertTrue("should capture 'world' line", lines.contains("world"));
 
         // Register/unregister must be balanced and use the same channelId+process.
-        assertEquals(1, pm.registerCalls);
-        assertEquals(1, pm.unregisterCalls);
-        assertEquals(pm.registeredChannelId.get(), pm.unregisteredChannelId.get());
+        assertEquals(1, pm.registerCalls.get());
+        assertEquals(1, pm.unregisterCalls.get());
+        assertEquals(pm.lastRegisteredChannelId.get(), pm.lastUnregisteredChannelId.get());
         assertSame(pm.registeredProcess.get(), pm.unregisteredProcess.get());
 
         // Channel ID convention — used by the Node Process panel to label entries.
-        assertNotNull(pm.registeredChannelId.get());
+        assertNotNull(pm.lastRegisteredChannelId.get());
         assertTrue("channelId should be prefixed",
-                pm.registeredChannelId.get().startsWith("prompt-enhancer-"));
+                pm.lastRegisteredChannelId.get().startsWith("prompt-enhancer-"));
 
         // Process must be dead after the call returns — no leak.
         assertFalse("process must not outlive the call",
@@ -149,9 +121,9 @@ public class PromptEnhancerProcessRunnerTest {
                 elapsed < 30_000);
 
         // Even on the timeout path, the process must be unregistered and dead.
-        assertEquals(1, pm.registerCalls);
+        assertEquals(1, pm.registerCalls.get());
         assertEquals("unregister must fire on timeout path too",
-                1, pm.unregisterCalls);
+                1, pm.unregisterCalls.get());
         assertFalse("force-killed process must not be alive after the call",
                 pm.registeredProcess.get().isAlive());
         assertEquals(0, pm.getActiveProcessCount());
