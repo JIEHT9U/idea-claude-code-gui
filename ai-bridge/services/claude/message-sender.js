@@ -248,12 +248,19 @@ function emitTextDelta(currentText, state, blockIndex = 0) {
   const textBlockMap = getBlockMap(state, 'textBlockContentByIndex');
   const previousBlock = textBlockMap.get(blockIndex) || '';
   rememberStreamSnapshot(state, 'text', blockIndex, currentText);
-  if (state.streamingEnabled && !state.hasStreamEvents && currentText.length > previousBlock.length) {
+  // Mirror stream-event-processor.js processMessageContent:
+  //   - !hasStreamEvents: pre-stream fallback, emit the whole text
+  //   - hasStreamEvents && previousBlock.length > 0: genuine tail-fill / snapshot correction
+  //   - hasStreamEvents && previousBlock.length === 0: stream will deliver this block shortly, suppress to avoid duplication
+  // The pre-PR branch suppressed tail-fill entirely when hasStreamEvents was true,
+  // which silently dropped legitimate tail content delivered only by the final
+  // assistant snapshot — diverging from the persistent-query-service path.
+  if (state.streamingEnabled && currentText.length > previousBlock.length) {
     const delta = currentText.substring(previousBlock.length);
-    if (delta) process.stdout.write(`[CONTENT_DELTA] ${JSON.stringify(delta)}\n`);
+    if (delta && (!state.hasStreamEvents || previousBlock.length > 0)) {
+      process.stdout.write(`[CONTENT_DELTA] ${JSON.stringify(delta)}\n`);
+    }
     state.lastAssistantContent = currentText;
-  } else if (state.streamingEnabled && state.hasStreamEvents) {
-    if (currentText.length > state.lastAssistantContent.length) state.lastAssistantContent = currentText;
   } else if (!state.streamingEnabled) {
     console.log('[CONTENT]', truncateErrorContent(currentText));
   }
@@ -264,12 +271,12 @@ function emitThinkingDelta(thinkingText, state, blockIndex = 0) {
   const thinkingBlockMap = getBlockMap(state, 'thinkingBlockContentByIndex');
   const previousThinkingBlock = thinkingBlockMap.get(blockIndex) || '';
   rememberStreamSnapshot(state, 'thinking', blockIndex, thinkingText);
-  if (state.streamingEnabled && !state.hasStreamEvents && thinkingText.length > previousThinkingBlock.length) {
+  if (state.streamingEnabled && thinkingText.length > previousThinkingBlock.length) {
     const delta = thinkingText.substring(previousThinkingBlock.length);
-    if (delta) process.stdout.write(`[THINKING_DELTA] ${JSON.stringify(delta)}\n`);
+    if (delta && (!state.hasStreamEvents || previousThinkingBlock.length > 0)) {
+      process.stdout.write(`[THINKING_DELTA] ${JSON.stringify(delta)}\n`);
+    }
     state.lastThinkingContent = thinkingText;
-  } else if (state.streamingEnabled && state.hasStreamEvents) {
-    if (thinkingText.length > state.lastThinkingContent.length) state.lastThinkingContent = thinkingText;
   } else if (!state.streamingEnabled) {
     console.log('[THINKING]', thinkingText);
   }
