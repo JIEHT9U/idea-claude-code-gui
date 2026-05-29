@@ -20,7 +20,12 @@ interface Window {
   /**
    * Update messages from backend
    */
-  updateMessages?: (json: string) => void;
+  updateMessages?: (json: string, sequence?: string | number) => void;
+
+  /**
+   * Patch a single message UUID without re-sending the full message list.
+   */
+  patchMessageUuid?: (content: string, uuid: string) => void;
 
   /**
    * Update status message
@@ -36,6 +41,11 @@ interface Window {
    * Show thinking status
    */
   showThinkingStatus?: (value: string | boolean) => void;
+
+  /**
+   * Show conversation summary/compaction notice
+   */
+  showSummary?: (summary: string) => void;
 
   /**
    * Set history data
@@ -58,15 +68,30 @@ interface Window {
   addErrorMessage?: (message: string) => void;
 
   /**
+   * Context usage dialog callback - receives JSON string with context usage data to show in a dialog.
+   */
+  showContextUsageDialog?: (json: string) => void;
+
+  /**
+   * Context usage error callback - shows error toast.
+   */
+  onContextUsageError?: (message: string, requestId?: string) => void;
+
+  /**
    * Add single history message (used for Codex session loading)
    */
   addHistoryMessage?: (message: any) => void;
 
   /**
-   * History load complete callback - 历史消息加载完成时调用
-   * 用于触发 Markdown 重新渲染，解决历史记录首次加载时渲染不正确的问题
+   * History load complete callback - invoked when history messages finish loading.
+   * Triggers Markdown re-rendering to fix incorrect rendering on first history load.
    */
   historyLoadComplete?: () => void;
+
+  /**
+   * Subagent sidechain history callback.
+   */
+  onSubagentHistoryLoaded?: (json: string) => void;
 
   /**
    * Add user message to chat (used for external Quick Fix feature)
@@ -85,6 +110,15 @@ interface Window {
   addToast?: (message: string, type: 'success' | 'error' | 'warning' | 'info') => void;
 
   /**
+   * Toast deferred until a session transition finishes, because backend
+   * clearMessages resets transient UI state during new-session creation.
+   */
+  __pendingSessionTransitionToast?: {
+    message: string;
+    type?: 'success' | 'error' | 'warning' | 'info';
+  };
+
+  /**
    * Usage statistics update callback
    */
   onUsageUpdate?: (json: string) => void;
@@ -95,7 +129,7 @@ interface Window {
   onModeChanged?: (mode: string) => void;
 
   /**
-   * Mode received callback - 后端主动推送权限模式（窗口初始化时调用）
+   * Mode received callback - backend pushes the permission mode (called during window initialization)
    */
   onModeReceived?: (mode: string) => void;
 
@@ -105,9 +139,9 @@ interface Window {
   onModelChanged?: (modelId: string) => void;
 
   /**
-   * Model confirmed callback - 后端确认模型设置成功后调用
-   * @param modelId 确认的模型 ID
-   * @param provider 当前的提供商
+   * Model confirmed callback - called after the backend confirms the model was set successfully
+   * @param modelId The confirmed model ID
+   * @param provider The current provider
    */
   onModelConfirmed?: (modelId: string, provider: string) => void;
 
@@ -127,17 +161,17 @@ interface Window {
   showPlanApprovalDialog?: (json: string) => void;
 
   /**
-   * Add selection info (file and line numbers) - 自动监听，只更新 ContextBar
+   * Add selection info (file and line numbers) - auto-tracked, only updates ContextBar
    */
   addSelectionInfo?: (selectionInfo: string) => void;
 
   /**
-   * Add code snippet to input box - 手动发送，添加代码片段标签到输入框
+   * Add code snippet to input box - manually triggered, inserts a code snippet tag into the input box
    */
   addCodeSnippet?: (selectionInfo: string) => void;
 
   /**
-   * Insert code snippet at cursor position - 由 ChatInputBox 注册
+   * Insert code snippet at cursor position - registered by ChatInputBox
    */
   insertCodeSnippetAtCursor?: (selectionInfo: string) => void;
 
@@ -150,11 +184,6 @@ interface Window {
    * File list result callback (for file reference provider)
    */
   onFileListResult?: (json: string) => void;
-
-  /**
-   * Command list result callback (for slash command provider)
-   */
-  onCommandListResult?: (json: string) => void;
 
   /**
    * Update MCP servers list
@@ -221,6 +250,11 @@ interface Window {
   updateStreamingEnabled?: (json: string) => void;
 
   /**
+   * Update Codex sandbox mode setting
+   */
+  updateCodexSandboxMode?: (json: string) => void;
+
+  /**
    * Update send shortcut setting
    */
   updateSendShortcut?: (json: string) => void;
@@ -234,6 +268,41 @@ interface Window {
    * Update commit AI prompt configuration
    */
   updateCommitPrompt?: (json: string) => void;
+
+  /**
+   * Update project-level commit AI prompt configuration
+   */
+  updateProjectCommitPrompt?: (json: string) => void;
+
+  /**
+   * Update sound notification configuration
+   */
+  updateSoundNotificationConfig?: (json: string) => void;
+
+  /**
+   * Update AI commit generation enabled state
+   */
+  updateCommitGenerationEnabled?: (json: string) => void;
+
+  /**
+   * Update AI session title generation enabled state
+   */
+  updateAiTitleGenerationEnabled?: (json: string) => void;
+
+  /**
+   * Update status bar widget enabled state
+   */
+  updateStatusBarWidgetEnabled?: (json: string) => void;
+
+  /**
+   * Update task completion notification enabled state
+   */
+  updateTaskCompletionNotificationEnabled?: (json: string) => void;
+
+  /**
+   * Update permission dialog timeout setting
+   */
+  updatePermissionDialogTimeout?: (json: string) => void;
 
   /**
    * Update current Claude config
@@ -261,9 +330,24 @@ interface Window {
   updateWorkingDirectory?: (json: string) => void;
 
   /**
+   * Update linkify/navigation capabilities used by Markdown rendering.
+   */
+  updateLinkifyCapabilities?: (json: string) => void;
+
+  /**
+   * File path resolved callback - receives the resolved absolute path for a file link tooltip.
+   */
+  onFilePathResolved?: (json: string) => void;
+
+  /**
    * Show success message
    */
   showSuccess?: (message: string) => void;
+
+  /**
+   * Show success message with i18n key
+   */
+  showSuccessI18n?: (i18nKey: string) => void;
 
   /**
    * Update skills list
@@ -301,6 +385,16 @@ interface Window {
   updateSlashCommands?: (json: string) => void;
 
   /**
+   * Update dollar commands list (for $ autocomplete)
+   */
+  updateDollarCommands?: (json: string) => void;
+
+  /**
+   * Pending dollar commands payload before callback registration
+   */
+  __pendingDollarCommands?: string;
+
+  /**
    * Pending slash commands payload before provider initialization
    */
   __pendingSlashCommands?: string;
@@ -332,19 +426,31 @@ interface Window {
   };
 
   /**
+   * Apply effective plugin UI font configuration (called from Java backend)
+   */
+  applyUiFontConfig?: (config: import('./types/uiFontConfig').UiFontConfig | string) => void;
+
+  /**
+   * Pending effective UI font config before applyUiFontConfig is registered
+   */
+  __pendingUiFontConfig?: import('./types/uiFontConfig').UiFontConfig;
+
+  /**
    * Apply IDEA language configuration (called from Java backend)
    * @param config Language configuration object containing language code and IDEA locale
    */
   applyIdeaLanguageConfig?: (config: {
     language: string;
+    source?: string;
     ideaLocale?: string;
-  }) => void;
+  } | string) => void;
 
   /**
    * Pending language config before applyIdeaLanguageConfig is registered
    */
   __pendingLanguageConfig?: {
     language: string;
+    source?: string;
     ideaLocale?: string;
   };
 
@@ -354,22 +460,39 @@ interface Window {
   updateEnhancedPrompt?: (result: string) => void;
 
   /**
-   * Update session title (called when session title changes)
+   * Update prompt enhancer settings config from backend
    */
-  updateSessionTitle?: (title: string) => void;
+  updatePromptEnhancerConfig?: (json: string) => void;
 
   /**
-   * Editor font config received callback - 接收 IDEA 编辑器字体配置
+   * Update commit AI settings config from backend
+   */
+  updateCommitAiConfig?: (json: string) => void;
+
+  /**
+   * Update session title (called when AI generates a title).
+   * @param sessionId - The session ID the title belongs to
+   * @param title - The generated title text
+   */
+  updateSessionTitle?: (sessionId: string, title: string) => void;
+
+  /**
+   * Editor font config received callback - receives IDEA editor font configuration
    */
   onEditorFontConfigReceived?: (json: string) => void;
 
   /**
-   * IDE theme received callback - 接收 IDE 主题配置
+   * Effective UI font config received callback
+   */
+  onUiFontConfigReceived?: (json: string) => void;
+
+  /**
+   * IDE theme received callback - receives IDE theme configuration
    */
   onIdeThemeReceived?: (json: string) => void;
 
   /**
-   * IDE theme changed callback - IDE 主题变化时的回调
+   * IDE theme changed callback - invoked when the IDE theme changes
    */
   onIdeThemeChanged?: (json: string) => void;
 
@@ -384,9 +507,34 @@ interface Window {
   agentOperationResult?: (json: string) => void;
 
   /**
+   * Agent import preview result callback
+   */
+  agentImportPreviewResult?: (json: string) => void;
+
+  /**
+   * Agent import result callback
+   */
+  agentImportResult?: (json: string) => void;
+
+  /**
    * Update prompts list
    */
   updatePrompts?: (json: string) => void;
+
+  /**
+   * Update global prompts list
+   */
+  updateGlobalPrompts?: (json: string) => void;
+
+  /**
+   * Update project prompts list
+   */
+  updateProjectPrompts?: (json: string) => void;
+
+  /**
+   * Update project info
+   */
+  updateProjectInfo?: (json: string) => void;
 
   /**
    * Prompt operation result callback
@@ -394,12 +542,22 @@ interface Window {
   promptOperationResult?: (json: string) => void;
 
   /**
-   * Selected agent received callback - 初始化时接收当前选中的智能体
+   * Prompt import preview result callback
+   */
+  promptImportPreviewResult?: (json: string) => void;
+
+  /**
+   * Prompt import result callback
+   */
+  promptImportResult?: (json: string) => void;
+
+  /**
+   * Selected agent received callback - receives the currently selected agent during initialization
    */
   onSelectedAgentReceived?: (json: string) => void;
 
   /**
-   * Selected agent changed callback - 选择智能体后的回调
+   * Selected agent changed callback - invoked after an agent is selected
    */
   onSelectedAgentChanged?: (json: string) => void;
 
@@ -419,113 +577,204 @@ interface Window {
   updateCurrentCodexConfig?: (json: string) => void;
 
 // ============================================================================
-  // 🔧 流式传输回调函数
+  // Streaming Callbacks
   // ============================================================================
 
   /**
-   * Stream start callback - 流式传输开始时调用
+   * Stream start callback - called when streaming begins
    */
   onStreamStart?: () => void;
 
   /**
-   * Content delta callback - 收到内容增量时调用
-   * @param delta 内容增量字符串
+   * Content delta callback - called when a content delta is received
+   * @param delta The content delta string
    */
   onContentDelta?: (delta: string) => void;
 
   /**
-   * Thinking delta callback - 收到思考增量时调用
-   * @param delta 思考增量字符串
+   * Thinking delta callback - called when a thinking delta is received
+   * @param delta The thinking delta string
    */
   onThinkingDelta?: (delta: string) => void;
 
   /**
-   * Stream end callback - 流式传输结束时调用
+   * Stream end callback - called when streaming ends
    */
-  onStreamEnd?: () => void;
+  onStreamEnd?: (sequence?: string | number) => void;
 
   /**
-   * Permission denied callback - 权限被拒绝时调用
-   * 用于标记未完成的工具调用为"中断"状态
+   * Streaming heartbeat callback - lightweight signal from backend during
+   * tool execution phases to prevent the stall watchdog from falsely triggering.
+   */
+  onStreamingHeartbeat?: () => void;
+
+  /**
+   * Permission denied callback - called when permission is denied.
+   * Marks incomplete tool calls as "interrupted".
    */
   onPermissionDenied?: () => void;
 
   /**
-   * 存储被拒绝的工具调用 ID 集合
-   * 用于让工具块知道哪些工具调用被用户拒绝了权限
+   * Set of denied tool call IDs.
+   * Used by tool blocks to determine which tool calls had their permission denied by the user.
    */
   __deniedToolIds?: Set<string>;
 
   /**
-   * 会话过渡抑制标志
-   * 在创建新会话期间为 true，防止旧会话回调通过 updateMessages 写回旧消息
+   * Session transition suppression flag.
+   * Set to true during new session creation to prevent stale callbacks from writing old messages via updateMessages.
    */
   __sessionTransitioning?: boolean;
 
   /**
-   * Update streaming enabled configuration - 接收流式传输配置
+   * Session transition token (debug/logging only).
+   * Regenerated for each logical transition so callbacks can identify the active transition
+   * generation in logs. NOT used for guard logic — the boolean __sessionTransitioning flag
+   * is the actual guard.
    */
-  updateStreamingEnabled?: (json: string) => void;
+  __sessionTransitionToken?: string | null;
 
   /**
-   * Rewind result callback - 回滚操作结果回调
+   * Resets all transient UI state (loading, streaming, toasts, refs) in one shot.
+   * Called by beginSessionTransition (useSessionManagement) to synchronously
+   * clear both React state AND internal refs before starting a new session.
+   */
+  __resetTransientUiState?: () => void;
+
+  /**
+   * Timestamp of the last streaming activity (content/thinking delta or message update).
+   * Used by the stream stall watchdog to detect when the backend→frontend bridge is broken.
+   */
+  __lastStreamActivityAt?: number;
+
+  /**
+   * The __turnId of the most recently ended streaming turn.
+   * Used by mergeConsecutiveAssistantMessages to distinguish recently-ended
+   * streaming messages from true history messages and prevent incorrect merging.
+   * Cleared after 5 seconds or when a new turn starts.
+   * @default undefined (no recently ended turn)
+   */
+  __lastStreamEndedTurnId?: number;
+
+  /**
+   * Timestamp when the last streaming turn ended (via onStreamEnd).
+   * Used with __lastStreamEndedTurnId to implement a time-based cleanup.
+   * @default undefined (no stream end recorded)
+   */
+   __lastStreamEndedAt?: number;
+
+   /**
+    * Turn ID for which onStreamEnd has already been processed.
+    * Used as an idempotency guard: when dual-path delivery sends onStreamEnd
+    * twice (primary via flush callback + fallback via Alarm), only the first
+    * arrival takes effect; the second is a no-op.
+    * Cleared in onStreamStart to allow the next turn.
+    * @default undefined (no processed turn)
+    */
+   __streamEndProcessedTurnId?: number;
+
+   /**
+   * Timestamp when the current streaming turn started.
+   * Used to calculate durationMs on the assistant message when the stream ends.
+   */
+  __turnStartedAt?: number;
+
+  /**
+   * Interval handle for the stream stall watchdog.
+   * Stored on window so re-registration of streaming callbacks clears the previous interval.
+   */
+  __stallWatchdogInterval?: ReturnType<typeof setInterval> | null;
+
+  /**
+   * Pending rAF handle and JSON for deferred updateMessages processing.
+   * Stored on window so re-registration of message callbacks cancels stale rAFs.
+   */
+  __pendingUpdateRaf?: number | null;
+  __pendingUpdateJson?: string | null;
+  __pendingUpdateSequence?: number | null;
+  __minAcceptedUpdateSequence?: number;
+  /** Cancel pending rAF-deferred updateMessages (set by messageCallbacks, called by onStreamEnd). */
+  __cancelPendingUpdateMessages?: () => void;
+
+  /**
+   * Rewind result callback - returns the result of a rewind operation
    */
   onRewindResult?: (json: string) => void;
 
   /**
-   * Undo file result callback - 单文件撤销操作结果回调
+   * Undo file result callback - returns the result of a single-file undo operation
    */
   onUndoFileResult?: (json: string) => void;
 
   /**
-   * Undo all files result callback - 批量撤销操作结果回调
+   * Undo all files result callback - returns the result of a batch undo operation
    */
   onUndoAllFileResult?: (json: string) => void;
 
   /**
-   * Handle remove file from edits list - 从编辑列表中移除文件（用户在 diff 视图中完全撤销更改时调用）
+   * Handle remove file from edits list - removes a file from the edits list (called when the user fully reverts changes in the diff view)
    */
   handleRemoveFileFromEdits?: (json: string) => void;
 
   /**
-   * Handle interactive diff result - 处理交互式 Diff 操作结果（Apply/Reject）
+   * Handle interactive diff result - processes the result of an interactive diff action (Apply/Reject)
    * @param json JSON string containing { filePath, action, content?, error? }
    */
   handleDiffResult?: (json: string) => void;
 
   // ============================================================================
-  // 🔧 依赖管理回调函数
+  // Dependency Management Callbacks
   // ============================================================================
 
   /**
-   * Update dependency status callback - 更新依赖状态
+   * Update dependency status callback
    */
   updateDependencyStatus?: (json: string) => void;
 
   /**
-   * Dependency install progress callback - 依赖安装进度
+   * Dependency install progress callback
    */
   dependencyInstallProgress?: (json: string) => void;
 
   /**
-   * Dependency install result callback - 依赖安装结果
+   * Dependency install result callback
    */
   dependencyInstallResult?: (json: string) => void;
 
   /**
-   * Dependency uninstall result callback - 依赖卸载结果
+   * Dependency uninstall result callback
    */
   dependencyUninstallResult?: (json: string) => void;
 
   /**
-   * Node environment status callback - Node.js 环境状态
+   * Node environment status callback
    */
   nodeEnvironmentStatus?: (json: string) => void;
 
   /**
-   * Dependency update available callback - 依赖更新检查结果
+   * Trigger Node environment re-check.
+   */
+  checkNodeEnvironment?: () => void;
+
+  /**
+   * Trigger concurrent Node environment checks for diagnostics.
+   */
+  runNodeEnvironmentStressTest?: (count?: number) => void;
+
+  /**
+   * Dependency update available callback
    */
   dependencyUpdateAvailable?: (json: string) => void;
+
+  /**
+   * Dependency versions loaded callback
+   */
+  dependencyVersionsLoaded?: (json: string) => void;
+
+  /**
+   * Pending dependency versions payload before settings initialization
+   */
+  __pendingDependencyVersions?: string;
 
   /**
    * Pending dependency updates payload before settings initialization
@@ -552,11 +801,31 @@ interface Window {
    */
   __pendingAutoOpenFileEnabled?: string;
 
+  /**
+   * Pending permission dialog timeout before React initialization
+   */
+  __pendingPermissionDialogTimeout?: string;
+
   __pendingPermissionDialogRequests?: string[];
 
   __pendingAskUserQuestionDialogRequests?: string[];
 
   __pendingPlanApprovalDialogRequests?: string[];
+
+  /**
+   * Pending updateMessages payload before React initialization
+   */
+  __pendingUpdateMessages?: string | { json: string; sequence?: number | null };
+
+  /**
+   * Pending status text before React initialization
+   */
+  __pendingStatusText?: string;
+
+  /**
+   * Pending summary text before React initialization
+   */
+  __pendingSummaryText?: string;
 
   /**
    * Pending user message before addUserMessage is registered (for Quick Fix feature)
@@ -567,4 +836,52 @@ interface Window {
    * Pending loading state before showLoading is registered (for Quick Fix feature)
    */
   __pendingLoadingState?: boolean;
+
+  /**
+   * Pending mode payload before setMode is registered.
+   */
+  __pendingModeReceived?: string;
+
+  /**
+   * Execute context action from IDEA shortcut (copy/cut/send)
+   */
+  execContextAction?: (action: string) => void;
+
+  /**
+   * Clipboard read callback for paste from IDEA shortcut
+   */
+  onClipboardRead?: (text: string) => void;
+
+  // ============================================================================
+  // Theme initialization (Java pre-injects before React boots)
+  // ============================================================================
+
+  /**
+   * Initial IDE theme injected by Java into the HTML before React boots.
+   * Used by useThemeInit to avoid a flash of incorrect theme.
+   */
+  __INITIAL_IDE_THEME__?: 'light' | 'dark';
+
+  // ============================================================================
+  // Provider settings panel callbacks (registered by ProviderList)
+  // ============================================================================
+
+  /**
+   * CLI login account info callback. Java pushes the logged-in account email
+   * after a successful CLI login to update the settings panel.
+   */
+  updateCliLoginAccountInfo?: (email: string) => void;
+
+  /**
+   * Provider import preview result callback. Java pushes a JSON string or
+   * parsed payload describing the providers detected during import preview.
+   */
+  import_preview_result?: (dataOrStr: string | { providers?: unknown }) => void;
+
+  /**
+   * Backend notification callback (variadic for backward compatibility).
+   * Modern callers pass (type, title, message); legacy callers pass a single
+   * JSON string or object with shape { type, title, message }.
+   */
+  backend_notification?: (...args: unknown[]) => void;
 }

@@ -80,20 +80,36 @@
     "disabled": "अक्षम",
     "sdkNotInstalled": "{{provider}} SDK इंस्टॉल नहीं है। चैट शुरू करने के लिए कृपया SDK इंस्टॉल करें।",
     "sdkStatusLoading": "Checking SDK status...",
-    "openSourceBanner": "यह प्रोजेक्ट हमेशा 100% ओपन सोर्स रहेगा। कृपया निश्चिंत होकर उपयोग करें!",
+    "openSourceBanner": "यह प्रोजेक्ट 100% ओपन सोर्स है (नकली प्रोजेक्ट से सावधान रहें)",
     "goInstallSdk": "इंस्टॉल करने जाएं",
     "commandNotImplemented": "`{{command}}` सुविधा अभी तक लागू नहीं की गई है।",
     "clearCommandDescription": "बातचीत इतिहास साफ़ करें और नया सत्र शुरू करें",
     "attachmentFile": "[अटैचमेंट: {{fileName}}]",
     "unknownFile": "Unknown file",
     "attachmentsUploaded": "[अटैचमेंट अपलोड हो गए]",
-    "streamingConnected": "Claude कनेक्ट हो गया, आपके प्रश्न को समझ रहा है"
+    "streamingConnected": "{{provider}} कनेक्ट हो गया, आपके प्रश्न को समझ रहा है",
+    "showEarlierMessages": "{{count}} पुराने संदेश दिखाएं",
+    "totalDuration": "इस जवाब में लगा समय",
+    "compactSummary": {
+      "summarizedConversation": "सारांशित वार्तालाप",
+      "compactSummary": "संक्षिप्त सारांश",
+      "messagesUpTo": "इस बिंदु तक के {{count}} संदेश सारांशित किए गए",
+      "messagesFrom": "इस बिंदु से आगे के {{count}} संदेश सारांशित किए गए",
+      "userContext": "संदर्भ: \"{{context}}\"",
+      "expand": "सारांश विस्तृत करें",
+      "collapse": "सारांश संक्षिप्त करें"
+    }
   },
   "settings": {
     "title": "सेटिंग्स",
     "basic": {
       "title": "बुनियादी कॉन्फ़िगरेशन",
       "description": "पेज थीम, भाषा और Node.js रनटाइम वातावरण कॉन्फ़िगर करें",
+      "tabs": {
+        "appearance": "दिखावट",
+        "behavior": "व्यवहार",
+        "environment": "वातावरण"
+      },
       "theme": {
         "label": "इंटरफ़ेस थीम",
         "system": "Follow IDE",
@@ -105,6 +121,7 @@
       },
       "language": {
         "label": "इंटरफ़ेस भाषा",
+        "followIde": "IDE का अनुसरण करें",
         "simplifiedChinese": "简体中文",
         "traditionalChinese": "繁體中文",
         "english": "English",
@@ -112,7 +129,9 @@
         "spanish": "Español",
         "french": "Français",
         "japanese": "日本語",
-        "russian": "Русский"
+        "russian": "Русский",
+        "korean": "한국어",
+        "portuguese": "Português (Brasil)"
       },
       "nodePath": {
         "label": "Node.js पथ",
@@ -137,8 +156,16 @@
         "level6": "सबसे बड़ा (140%)"
       },
       "editorFont": {
-        "label": "फ़ॉन्ट (संपादक फ़ॉन्ट का अनुसरण करता है)",
-        "hint": "यहाँ संपादन योग्य नहीं है। संशोधित करने के लिए, IDEA सेटिंग्स → संपादक → फ़ॉन्ट पर जाएं (प्लगइन फ़ॉन्ट प्रभावी होने के लिए IDEA पुनः आरंभ करें)"
+        "label": "फ़ॉन्ट",
+        "hint": "यहाँ प्लगइन UI का फ़ॉन्ट बदला जाता है; फ़ॉन्ट आकार और लाइन स्पेसिंग अभी भी एडिटर का अनुसरण करते हैं।",
+        "followOption": "एडिटर का अनुसरण करें ({{font}})",
+        "customOption": "कस्टम फ़ॉन्ट फ़ाइल",
+        "customPathLabel": "फ़ॉन्ट फ़ाइल पथ",
+        "customPathPlaceholder": ".ttf / .otf फ़ॉन्ट फ़ाइल का पथ चुनें या दर्ज करें",
+        "browse": "ब्राउज़ करें",
+        "warningUnavailable": "फ़ॉन्ट उपलब्ध नहीं है, अभी एडिटर फ़ॉन्ट उपयोग में है",
+        "statusFollowEditor": "अभी एडिटर फ़ॉन्ट उपयोग में है: {{font}}",
+        "statusCustom": "अभी कस्टम फ़ॉन्ट उपयोग में है: {{font}}"
       },
       "streaming": {
         "label": "Streaming",
@@ -147,10 +174,36 @@
         "hint": "When enabled, AI responses will appear character by character in real-time, instead of waiting for the complete response. May consume more resources."
       },
       "autoOpenFile": {
-        "label": "Auto Open File",
-        "enabled": "Enabled",
-        "disabled": "Disabled",
-        "hint": "When enabled, files will automatically open in the editor when selected in the project tree. When disabled, manual action is required to open files."
+        "label": "खुली फ़ाइल पथ भेजें",
+        "enabled": "सक्षम",
+        "disabled": "अक्षम",
+        "hint": "सक्षम होने पर, प्रोजेक्ट ट्री में फ़ाइल चुनने पर उसका फ़ाइल पथ स्वचालित रूप से AI को भेजा जाएगा (ध्यान दें: केवल फ़ाइल पथ भेजा जाता है, फ़ाइल सामग्री नहीं)। अक्षम होने पर मैन्युअल कार्रवाई आवश्यक है।"
+      },
+      "promptEnhancer": {
+        "label": "Prompt Enhancer",
+        "modelLabel": "Enhancer Model",
+        "resetToDefault": "Restore Default",
+        "providerAvailable": "Available",
+        "providerUnavailable": "Currently unavailable",
+        "provider": {
+          "claude": "Claude Code",
+          "codex": "Codex"
+        },
+        "currentProviderAuto": "Currently using automatic selection: {{provider}}",
+        "currentProviderManual": "Currently using manually selected provider: {{provider}}",
+        "currentProviderUnavailable": "The selected provider is currently unavailable: {{provider}}"
+      },
+      "diffExpanded": {
+        "label": "डिफ़ॉल्ट रूप से अंतर दिखाएं",
+        "enabled": "विस्तारित",
+        "disabled": "संक्षिप्त",
+        "hint": "सक्षम होने पर, चैट में कोड अंतर डिफ़ॉल्ट रूप से विस्तारित होंगे। अक्षम होने पर, अंतर संक्षिप्त शुरू होते हैं।"
+      },
+      "taskCompletionNotification": {
+        "label": "कार्य पूर्ण सूचना",
+        "enabled": "सक्षम",
+        "disabled": "अक्षम",
+        "hint": "सक्षम होने पर, AI कार्य पूरा होने पर सिस्टम सूचना दिखाता है। अक्षम होने पर, कोई सूचना नहीं दिखती।"
       },
       "sendShortcut": {
         "label": "भेजने का शॉर्टकट",
@@ -159,11 +212,22 @@
         "cmdEnter": "⌘/Ctrl+Enter से भेजें",
         "cmdEnterDesc": "संदेश भेजने के लिए ⌘/Ctrl+Enter दबाएं, नई पंक्ति के लिए Enter"
       },
+      "permissionDialogTimeout": {
+        "label": "अनुमति और प्रश्न संवाद टाइमआउट",
+        "unit": "सेकंड",
+        "hint": "Claude प्रश्न संवाद और अनुमति अनुरोध संवाद के लिए टाइमआउट सेट करें (30~3600 सेकंड)। टाइमआउट के बाद, संवाद स्वचालित रूप से बंद हो जाएगा और Claude जारी रहेगा।"
+      },
       "chatBgColor": {
         "label": "चैट पृष्ठभूमि रंग",
         "custom": "कस्टम",
         "reset": "रीसेट करें",
         "hint": "चैट क्षेत्र के पृष्ठभूमि रंग को अनुकूलित करें। थीम डिफ़ॉल्ट का पालन करने के लिए खाली छोड़ दें।"
+      },
+      "userMsgColor": {
+        "label": "उपयोगकर्ता संदेश रंग",
+        "custom": "कस्टम",
+        "reset": "रीसेट करें",
+        "hint": "अपने संदेशों की पृष्ठभूमि रंग को अनुकूलित करें। थीम डिफ़ॉल्ट का पालन करने के लिए खाली छोड़ दें।"
       }
     },
     "providers": "प्रदाता प्रबंधन",
@@ -172,12 +236,18 @@
       "claude": "Claude Code",
       "codex": "Codex"
     },
+    "pluginModels": {
+      "title": "कस्टम मॉडल",
+      "description": "यहाँ जोड़े गए कस्टम मॉडल सभी प्रदाताओं के अंतर्गत दिखाई देंगे, मॉडल चयन सूची में सबसे ऊपर प्रदर्शित होंगे",
+      "dialogTitle": "कस्टम मॉडल प्रबंधन",
+      "manage": "मॉडल प्रबंधन"
+    },
     "dependencies": "SDK निर्भरताएं",
     "dependenciesDesc": "AI SDK निर्भरताओं की इंस्टॉलेशन और अपडेट प्रबंधित करें",
     "dependency": {
       "title": "SDK निर्भरता प्रबंधन",
       "description": "AI SDK निर्भरताएं प्रबंधित करें। पहली बार उपयोग करने से पहले आवश्यक SDK इंस्टॉल करें।",
-      "installPolicyTip": "पैकेज का आकार कम करने के लिए, SDK अब मैन्युअल रूप से इंस्टॉल करना होगा",
+      "installPolicyTip": "इंस्टॉलेशन में समस्या? त्रुटि को टर्मिनल CLI AI में कॉपी करके हल करें",
       "claudeSdkName": "Claude Code SDK",
       "claudeSdkDescription": "Claude AI सुविधाओं के लिए आवश्यक। Claude Code SDK और संबंधित निर्भरताएं शामिल हैं।",
       "codexSdkName": "Codex SDK",
@@ -195,7 +265,9 @@
       "installSuccess": "{{name}} सफलतापूर्वक इंस्टॉल हो गया",
       "installFailed": "इंस्टॉलेशन विफल: {{error}}",
       "uninstallSuccess": "{{name}} अनइंस्टॉल हो गया",
-      "uninstallFailed": "अनइंस्टॉल विफल: {{error}}"
+      "uninstallFailed": "अनइंस्टॉल विफल: {{error}}",
+      "updating": "अपडेट हो रहा है...",
+      "updateSuccess": "{{name}} सफलतापूर्वक अपडेट हो गया"
     },
     "usage": "उपयोग सांख्यिकी",
     "usageDesc": "अपनी Token खपत, लागत सांख्यिकी और उपयोग प्रवृत्ति विश्लेषण देखें",
@@ -203,13 +275,32 @@
     "mcpDesc": "Model Context Protocol सर्वर कॉन्फ़िगर और प्रबंधित करें",
     "permissions": "अनुमति कॉन्फ़िगरेशन",
     "permissionsDesc": "Claude Code की फ़ाइल एक्सेस और ऑपरेशन अनुमतियां प्रबंधित करें",
+    "promptEnhancer": {
+      "title": "Prompt Enhancer",
+      "description": "Choose which provider and model should be used when enhancing prompts before sending them."
+    },
     "commit": {
       "title": "Commit AI",
       "description": "Configure AI-generated Git commit message behavior",
+      "providerModel": {
+        "label": "कमिट मॉडल प्रदाता",
+        "modelLabel": "कमिट मॉडल",
+        "resetToDefault": "रीसेट",
+        "providerAvailable": "उपलब्ध",
+        "providerUnavailable": "अनुपलब्ध",
+        "currentProviderAuto": "वर्तमान में स्वचालित चयन का उपयोग: {{provider}}",
+        "currentProviderManual": "वर्तमान में मैन्युअल रूप से चयनित प्रदाता का उपयोग: {{provider}}",
+        "currentProviderUnavailable": "चयनित प्रदाता वर्तमान में अनुपलब्ध है: {{provider}}"
+      },
       "prompt": {
         "label": "Additional Prompt",
         "placeholder": "Add your extra requirements here, e.g., generate commit in English, include issue number, etc...",
         "hint": "The plugin has built-in CCG Commits specification prompts. Content you add here will be used as additional requirements, and AI will prioritize your instructions."
+      },
+      "projectPrompt": {
+        "label": "प्रोजेक्ट-विशिष्ट अतिरिक्त प्रॉम्प्ट",
+        "placeholder": "यहाँ प्रोजेक्ट-विशिष्ट आवश्यकताएँ जोड़ें, जैसे: scope में मॉड्यूल नाम का उपयोग करें, commit body में प्रभाव क्षेत्र शामिल करें, आदि...",
+        "hint": "यह प्रॉम्प्ट केवल वर्तमान प्रोजेक्ट पर लागू होता है और वैश्विक अतिरिक्त प्रॉम्प्ट के साथ मिलकर जोड़ा जाता है। जब दोनों में विरोध हो, तो प्रोजेक्ट प्रॉम्प्ट को प्राथमिकता दी जाती है। विभिन्न प्रोजेक्ट्स को स्वतंत्र रूप से कॉन्फ़िगर किया जा सकता है।"
       },
       "codeReview": {
         "comingSoon": "Coming Soon",
@@ -260,6 +351,12 @@
           "minutesAgo_other": "{{count}} मिनट पहले",
           "justNow": "अभी"
         }
+      },
+      "aiTitleGeneration": {
+        "label": "AI सत्र शीर्षक स्वतः निर्माण",
+        "enabled": "सक्षम",
+        "disabled": "अक्षम",
+        "hint": "सक्षम होने पर, नए सत्र की पहली प्रतिक्रिया के बाद Haiku मॉडल छोटा शीर्षक स्वतः बनाएगा। अक्षम होने पर सत्र पहले उपयोगकर्ता संदेश को शीर्षक के रूप में रखेगा।"
       }
     },
     "codexFeatureUnavailable": "यह सेटिंग अनुभाग अभी Codex में उपलब्ध नहीं है। कृपया Claude Code पर स्विच करें।",
@@ -271,6 +368,11 @@
     "communityDesc": "नवीनतम जानकारी और तकनीकी सहायता के लिए आधिकारिक WeChat समूह में शामिल होने के लिए नीचे QR कोड स्कैन करें",
     "communityQrTip": "WeChat से स्कैन करके समुदाय में शामिल हों",
     "communityQrAlt": "आधिकारिक WeChat समुदाय QR कोड",
+    "githubTitle": "GitHub रिपॉजिटरी",
+    "githubDesc": "यह प्रोजेक्ट GitHub पर ओपन सोर्स है। सपोर्ट के लिए Star करें!",
+    "githubCopyBtn": "रिपॉजिटरी URL कॉपी करें",
+    "githubCopied": "रिपॉजिटरी URL क्लिपबोर्ड पर कॉपी हो गया। कृपया इसे अपने ब्राउज़र में खोलें।",
+    "githubCopyFailed": "कॉपी करने में विफल। कृपया मैन्युअल रूप से कॉपी करें।",
     "sponsor": "Sponsor",
     "sponsorDesc": "If this project helps you, consider sponsoring to support ongoing maintenance!",
     "alipay": "Alipay",
@@ -283,6 +385,7 @@
       "emptyProvider": "कोई प्रदाता कॉन्फ़िगर नहीं",
       "notConfigured": "कॉन्फ़िगर नहीं किया गया",
       "apiKey": "API Key",
+      "apiKeyHelper": "API Key हेल्पर",
       "baseUrl": "Base URL",
       "provider": "प्रदाता",
       "source": "स्रोत",
@@ -322,6 +425,59 @@
       "localProviderName": "Local settings.json",
       "localProviderDescription": "Use configuration directly from ~/.claude/settings.json",
       "localProviderHelp": "When using local provider mode:\n• The plugin will not modify your ~/.claude/settings.json file\n• You need to manually manage your configurations\n• Make sure the file exists and contains valid JSON\n• Suitable for advanced users who prefer manual control",
+      "authorizeAndEnable": "अधिकृत करें और सक्षम करें",
+      "revokeAuthorization": "प्राधिकरण रद्द करें",
+      "cliLoginProviderName": "CLI लॉगिन स्थिति",
+      "cliLoginProviderDescription": "टर्मिनल में पहले से पूर्ण की गई आपकी Claude CLI लॉगिन स्थिति का पुन: उपयोग करें",
+      "cliLoginAuthorizeTitle": "CLI लॉगिन स्थिति को अधिकृत करें",
+      "cliLoginAuthorizeMessage": "यह प्लगइन को API अनुरोधों के लिए आपके Claude CLI लॉगिन सत्र का उपयोग करने की अनुमति देगा। आपको पहले टर्मिनल में Claude CLI के माध्यम से लॉग इन होना चाहिए।",
+      "cliLoginAuthorizeDetail": "प्लगइन प्रमाणीकरण को Claude SDK के मूल OAuth प्रवाह को सौंपता है। आप किसी भी समय इस प्राधिकरण को रद्द कर सकते हैं।",
+      "cliLoginDisableTitle": "CLI लॉगिन प्राधिकरण रद्द करें",
+      "cliLoginDisableMessage": "यह CLI लॉगिन स्थिति का उपयोग बंद कर देगा और जब तक आप स्पष्ट रूप से कोई अन्य प्रदाता सक्षम नहीं करते, Claude को बिना किसी सक्रिय प्रदाता के छोड़ देगा।",
+      "cliLoginAccountInfo": "के रूप में लॉग इन: {{email}}",
+      "subscriptionTutorial": {
+        "entry": "सदस्यता खाता गाइड",
+        "dialogTitle": "सदस्यता खाता कैसे उपयोग करें",
+        "tabAriaLabel": "सदस्यता खाता गाइड टैब",
+        "tabs": {
+          "claude": "Claude सदस्यता",
+          "codex": "Codex सदस्यता"
+        },
+        "code": {
+          "copy": "कोड कॉपी करें",
+          "copied": "कॉपी किया"
+        },
+        "providers": {
+          "claude": {
+            "title": "Claude Code सदस्यता खाता कैसे उपयोग करें",
+            "item1": "टर्मिनल में Claude Code CLI के माध्यम से सदस्यता खाते में लॉगिन करें, फिर टर्मिनल में सामान्य रूप से चैट कर सकते हैं",
+            "item2": "सुनिश्चित करें कि ~/.claude/settings.json फ़ाइल और .env फ़ाइल खाली हैं",
+            "item3": "IDEA को रीस्टार्ट करें, और आप सामान्य रूप से चैट कर सकते हैं",
+            "emptyConfigCodeLabel": "~/.claude/settings.json",
+            "emptyConfigCode": "{\n  \"env\": {\n  }\n}",
+            "noteTitle": "विशेष मामले की टिप्पणी:",
+            "note1": "यदि आपने उपरोक्त चरण किए हैं लेकिन प्लगइन अभी भी प्रतिसाद नहीं दे रहा, तो ~/.claude/settings.json .env को इस पर सेट करें:",
+            "proxyConfigCodeLabel": "~/.claude/settings.json",
+            "proxyConfigCode": "{\n  \"env\": {\n    \"HTTP_PROXY\": \"http://127.0.0.1:7897\",\n    \"HTTPS_PROXY\": \"http://127.0.0.1:7897\"\n  }\n}",
+            "issuePrefix": "यदि यह अभी भी काम नहीं करता, तो GitHub पर समस्या रिपोर्ट करें: ",
+            "issueUrl": "https://github.com/zhukunpenglinyutong/idea-claude-code-gui/issues"
+          },
+          "codex": {
+            "title": "Codex सदस्यता खाता सेटअप",
+            "item1": "टर्मिनल Codex CLI में codex login चलाएं और लॉगिन करें, फिर टर्मिनल में चैट कर सकते हैं",
+            "item2": "IDEA रीस्टार्ट करें",
+            "item3": "अब आप सामान्य रूप से चैट कर सकते हैं",
+            "emptyConfigCodeLabel": "",
+            "emptyConfigCode": "",
+            "noteTitle": "",
+            "note1": "",
+            "proxyConfigCodeLabel": "",
+            "proxyConfigCode": "",
+            "issuePrefix": "यदि यह अभी भी काम नहीं करता, तो GitHub पर समस्या रिपोर्ट करें: ",
+            "issueUrl": "https://github.com/zhukunpenglinyutong/idea-claude-code-gui/issues"
+          }
+        }
+      },
       "importDialog": {
         "title": "cc-switch कॉन्फ़िगरेशन आयात करें",
         "summary": "कुल {{total}} कॉन्फ़िगरेशन पहचाने गए, जिनमें",
@@ -340,6 +496,7 @@
         "addTitle": "प्रदाता जोड़ें",
         "editTitle": "प्रदाता संपादित करें: {{name}}",
         "addDescription": "नए प्रदाता की जानकारी कॉन्फ़िगर करें",
+        "securityNotice": "सूचना: सभी सेटिंग्स आपके कंप्यूटर पर स्थानीय रूप से संग्रहीत हैं। यह प्रोजेक्ट 100% ओपन सोर्स है। कृपया निश्चिंत होकर उपयोग करें।",
         "editDescription": "परिवर्तन तुरंत वर्तमान प्रदाता पर लागू होंगे।",
         "providerName": "प्रदाता का नाम",
         "providerNamePlaceholder": "उदाहरण: Claude आधिकारिक",
@@ -383,7 +540,10 @@
         "kimi": "Kimi K2",
         "deepseek": "DeepSeek",
         "minimax": "MiniMax",
-        "xiaomi": "Xiaomi MiMo"
+        "xiaomi": "Xiaomi MiMo",
+        "xiaomiPlan": "Xiaomi MiMo Plan",
+        "qwen": "Alibaba Qwen",
+        "openrouter": "OpenRouter"
       }
     },
     "comingSoon": "सुविधा जल्द आ रही है...",
@@ -420,9 +580,28 @@
         "modelIdPlaceholder": "Model ID (required, e.g., gpt-4o)",
         "modelLabelPlaceholder": "Display name (optional)",
         "modelDescPlaceholder": "Model description (optional)",
+        "cliLoginProviderName": "Codex CLI लॉगिन",
+        "cliLoginProviderDescription": "Codex CLI से ChatGPT सब्सक्रिप्शन क्रेडेंशियल्स का उपयोग करें",
+        "cliLoginAuthorizeTitle": "Codex CLI लॉगिन सक्षम करें",
+        "cliLoginAuthorizeMessage": "यह config.toml को साफ़ करेगा और Codex CLI से ChatGPT सब्सक्रिप्शन क्रेडेंशियल्स का उपयोग करेगा।",
+        "cliLoginAuthorizeDetail": "सुनिश्चित करें कि आपने टर्मिनल में 'codex login' से लॉगिन किया हो। आपके वर्तमान config.toml को बैकअप किया जाएगा।",
+        "cliLoginDisableTitle": "Codex CLI लॉगिन अक्षम करें",
+        "cliLoginDisableMessage": "यह पुराने config.toml को पुनर्स्थापित करेगा और API की प्रमाणीकरण पर स्विच करेगा।",
         "modelIdRequired": "Model ID is required",
         "modelIdInvalid": "Invalid model ID format (only letters, numbers, dots, hyphens, underscores, slashes and colons allowed)",
-        "modelIdDuplicate": "Model ID already exists"
+        "modelIdDuplicate": "Model ID already exists",
+        "envVarsTitle": "Environment Variables",
+        "messageEnvLabel": "Message Environment Variables",
+        "messageEnvHint": "Custom environment variables injected into the Codex message subprocess",
+        "mcpEnvLabel": "MCP Environment Variables",
+        "mcpEnvHint": "Custom environment variables injected into the MCP tool discovery subprocess",
+        "envKeyPlaceholder": "ENV_KEY",
+        "envValuePlaceholder": "value",
+        "addEnvVar": "Add Variable",
+        "envKeyInvalid": "Invalid key name (must start with letter/underscore, alphanumeric only)",
+        "envKeyProtected": "Cannot set built-in variable: {{key}}",
+        "envKeyDuplicate": "Duplicate key: {{key}}",
+        "envValueTooLong": "मान बहुत लंबा है (अधिकतम {{max}} अक्षर)"
       }
     },
     "agent": {
@@ -498,6 +677,16 @@
     "confirmDelete": "हटाने की पुष्टि करें",
     "deleteMessage": "क्या आप इस सत्र को हटाना चाहते हैं? यह क्रिया पूर्ववत नहीं की जा सकती।",
     "deleteSession": "इस सत्र को हटाएं",
+    "selectMode": "Select",
+    "exitSelectMode": "Exit selection",
+    "selectedSessions": "{{count}} selected",
+    "selectAll": "Select all",
+    "clearSelection": "Clear",
+    "deleteSelected": "Delete selected",
+    "confirmDeleteSelected": "Confirm Delete",
+    "deleteSelectedMessage": "Are you sure you want to delete {{count}} selected sessions? This action cannot be undone.",
+    "selectSession": "Select session",
+    "selectSessionWithTitle": "Select {{title}}",
     "exportSession": "सत्र निर्यात करें",
     "exportSuccess": "सत्र निर्यात किया गया",
     "exportFailed": "निर्यात विफल",
@@ -513,12 +702,16 @@
     "messageCount": "{{count}} संदेश",
     "searchPlaceholder": "सत्र शीर्षक खोजें...",
     "noSearchResults": "कोई मिलान सत्र नहीं मिला",
+    "tryOtherKeywords": "अन्य खोज कीवर्ड आज़माएं",
     "deepSearchTooltip": "Deep Search (clear cache and reload)",
     "editTitle": "शीर्षक संपादित करें",
     "saveTitleButton": "सहेजें",
     "cancelEditButton": "रद्द करें",
     "titleTooLong": "शीर्षक बहुत लंबा (अधिकतम 50 वर्ण)",
     "titleUpdated": "शीर्षक अपडेट किया गया",
+    "copySessionId": "CLI resume के लिए सेशन ID कॉपी करें",
+    "sessionIdCopied": "सेशन ID कॉपी किया गया",
+    "copyFailed": "कॉपी विफल",
     "timeAgo": {
       "yearsAgo": "साल पहले",
       "monthsAgo": "महीने पहले",
@@ -546,7 +739,8 @@
       "WebSearch": "वेब खोज",
       "WebFetch": "वेब प्राप्त करें",
       "execute": "{{toolName}} निष्पादित करें",
-      "readDirectory": "निर्देशिका पढ़ें"
+      "readDirectory": "निर्देशिका पढ़ें",
+      "timeoutWarning": "कृपया जल्द उत्तर दें, डायलॉग {{seconds}} सेकंड में स्वचालित रूप से बंद हो जाएगा"
     }
   },
   "askUserQuestion": {
@@ -602,6 +796,12 @@
     "clickToCopy": "कॉपी करने के लिए क्लिक करें",
     "switch": "स्विच",
     "switchProvider": "प्रदाता स्विच करें",
+    "runtimeProvider": {
+      "title": "वर्तमान प्रदाता बदलें",
+      "loading": "प्रदाता लोड हो रहे हैं...",
+      "empty": "कोई प्रदाता उपलब्ध नहीं",
+      "switched": "{{provider}} पर स्विच किया गया"
+    },
     "link": "लिंक"
   },
   "markdown": {
@@ -619,6 +819,7 @@
     "last30Days": "पिछले 30 दिन",
     "allTime": "सभी समय",
     "refreshData": "डेटा रीफ्रेश करें",
+    "estimateNotice": "उपयोग आँकड़े अनुमानित हैं और अशुद्ध हो सकते हैं। इन्हें उपयोग प्रवृत्ति संदर्भ के रूप में उपयोग करें, वास्तविक बिलिंग के रूप में नहीं।",
     "overview": "अवलोकन",
     "models": "मॉडल",
     "sessions": "सत्र",
@@ -808,6 +1009,7 @@
     "runCommand": "कमांड चलाएं",
     "contextEngine": "संदर्भ इंजन",
     "task": "कार्य",
+    "promptLabel": "प्रॉम्प्ट",
     "readFile": "फ़ाइल पढ़ें",
     "editFile": "फ़ाइल संपादित करें",
     "writeFile": "फ़ाइल लिखें",
@@ -835,6 +1037,7 @@
     "searchBatchTitle": "बैच खोज",
     "editPrefix": "संपादित करें: {{fileName}}",
     "lineRange": "पंक्तियाँ {{start}}-{{end}}",
+    "lineSingle": "पंक्ति {{line}}",
     "filePath": "फ़ाइल पथ:",
     "unknownTool": "अज्ञात टूल",
     "bashGroupBatchRun": "Batch Run Commands",
@@ -892,14 +1095,21 @@
     "importSkill": "Import Skill",
     "importGlobalSkill": "Import Global Skill",
     "importLocalSkill": "Import Local Skill",
+    "importUserSkill": "उपयोगकर्ता Skill आयात करें",
+    "importRepoSkill": "रिपॉजिटरी Skill आयात करें",
+    "user": "उपयोगकर्ता",
+    "repo": "रिपॉजिटरी",
     "description": "Description",
     "noDescription": "No description",
     "noSkills": "No Skills",
+    "noMatchingSkills": "कोई मिलान करने वाला Skill नहीं मिला",
     "importHint": "Click + button to import Skill file or folder",
     "deleteTitle": "Delete Skill",
     "deleteMessage": "Are you sure you want to delete {{scope}} Skill \"{{name}}\"?\n\nThis action cannot be undone.",
     "deleteMessageGlobal": "global",
     "deleteMessageLocal": "local",
+    "deleteMessageUser": "उपयोगकर्ता",
+    "deleteMessageRepo": "रिपॉजिटरी",
     "importSuccess": "Successfully imported {{count}} Skills",
     "importSuccessOne": "Successfully imported 1 Skill",
     "importPartialSuccess": "Successfully imported {{count}}/{{total}} Skills, some failed",
@@ -907,6 +1117,12 @@
     "deleteSuccess": "Successfully deleted Skill",
     "toggleSuccess": "Updated Skill status",
     "toggleFailed": "Failed to update Skill status",
+    "deleteFailed": "Skill हटाने में विफल",
+    "enableSuccess": "Skill सफलतापूर्वक सक्षम: {{name}}",
+    "disableSuccess": "Skill सफलतापूर्वक अक्षम: {{name}}",
+    "operationFailed": "ऑपरेशन विफल: {{error}}",
+    "operationError": "Skill ऑपरेशन विफल",
+    "refreshed": "Skills सूची ताज़ा की गई",
     "help": {
       "title": "Skills क्या हैं?",
       "overview": {
@@ -954,52 +1170,118 @@
         "link1": "Skills क्या हैं?",
         "link2": "कस्टम Skills बनाना",
         "link3": "Anthropic Skills उदाहरण रिपॉजिटरी"
+      },
+      "codex": {
+        "title": "Codex Skills क्या हैं?",
+        "overview": {
+          "title": "अवलोकन",
+          "description": "Codex Skills .agents/skills/ डायरेक्टरी में संग्रहीत निर्देश सेट हैं जो विशिष्ट कार्यों के लिए Codex के प्रदर्शन को बढ़ाते हैं। चैट में $ प्रीफ़िक्स का उपयोग करके उन्हें कॉल करें।"
+        },
+        "structure": {
+          "title": "Skill संरचना",
+          "description": "Codex Skill एक फ़ोल्डर है जिसमें SKILL.md फ़ाइल होती है:",
+          "example": ".agents/skills/\n└── my-skill/\n    ├── SKILL.md          # Required: skill definition file\n    ├── templates/        # Optional: template files\n    └── references/       # Optional: reference materials"
+        },
+        "format": {
+          "title": "SKILL.md प्रारूप",
+          "description": "SKILL.md फ़ाइलें YAML फ्रंटमैटर + Markdown प्रारूप का उपयोग करती हैं:",
+          "example": "---\nname: my-skill-name\ndescription: Skill description and when to use\n---\n\n# Skill Instructions\n\nDetailed instruction content...",
+          "hint": "name और description आवश्यक फ़ील्ड हैं"
+        },
+        "configuration": {
+          "title": "कॉन्फ़िगरेशन",
+          "description": "Codex Skills कहाँ संग्रहीत होती हैं:",
+          "userPath": {
+            "label": "उपयोगकर्ता डायरेक्टरी",
+            "description": "~/.agents/skills/, सभी प्रोजेक्ट्स में साझा"
+          },
+          "repoPath": {
+            "label": "रिपॉजिटरी डायरेक्टरी",
+            "description": "{project-root}/.agents/skills/, केवल वर्तमान प्रोजेक्ट में उपलब्ध"
+          },
+          "configToml": {
+            "label": "सक्षम/अक्षम",
+            "description": "~/.codex/config.toml में [[skills.config]] प्रविष्टियों द्वारा नियंत्रित"
+          }
+        },
+        "tips": {
+          "title": "उपयोग युक्तियाँ",
+          "item1": "सुनिश्चित करें कि Skill डायरेक्टरी में एक वैध SKILL.md फ़ाइल है",
+          "item2": "Skill नामों में लोअरकेस अक्षर, संख्याएँ और हाइफ़न का उपयोग करें",
+          "item3": "Skill ऑटोकम्प्लीट ट्रिगर करने के लिए चैट में $ प्रीफ़िक्स टाइप करें",
+          "item4": "सक्षम/अक्षम टॉगल से प्रत्येक Skill की स्थिति नियंत्रित करें",
+          "item5": "अक्षम Skills ~/.codex/config.toml में दर्ज होती हैं"
+        },
+        "learnMore": {
+          "title": "अधिक जानें",
+          "description": "Codex Skills के बारे में अधिक जानकारी:",
+          "link1": "Codex Skills दस्तावेज़ीकरण"
+        }
       }
     }
   },
   "models": {
+    "addModel": "मॉडल जोड़ें",
     "claude": {
       "sonnet46": {
         "label": "Sonnet 4.6",
         "description": "Sonnet 4.6 · डिफ़ॉल्ट अनुशंसित मॉडल"
       },
       "opus46": {
-        "label": "Opus 4.6",
-        "description": "Opus 4.6 · नवीनतम और सबसे सक्षम"
+        "label": "Opus 4.7",
+        "description": "Opus 4.7 · नवीनतम और सबसे सक्षम"
       },
       "opus46_1m": {
-        "label": "Opus (1M संदर्भ)",
-        "description": "Opus 4.6 लंबे सत्रों के लिए"
+        "label": "Opus 4.6",
+        "description": "Opus 4.6 · उच्च-प्रदर्शन तर्क मॉडल"
       },
       "haiku45": {
         "label": "Haiku 4.5",
         "description": "Haiku 4.5 · सबसे तेज़, त्वरित उत्तरों के लिए उपयुक्त"
       }
     },
+    "longContext": {
+      "label": "1M",
+      "shortLabel": "1M संदर्भ",
+      "tooltipEnabled": "1M संदर्भ चालू/बंद करें",
+      "tooltipDisabled": "Haiku के लिए 1M संदर्भ उपलब्ध नहीं है"
+    },
     "codex": {
       "gpt53codex": {
-        "label": "gpt-5.3-codex",
+        "label": "GPT-5.3-Codex",
         "description": "नवीनतम फ्रंटियर एजेंटिक कोडिंग मॉडल, उन्नत क्षमताओं के साथ।"
       },
-      "gpt53": {
-        "label": "gpt-5.3",
-        "description": "नवीनतम फ्रंटियर मॉडल, महत्वपूर्ण सुधारों के साथ।"
+      "gpt55": {
+        "label": "GPT-5.5",
+        "description": "और अधिक सक्षम नवीनतम फ्रंटियर मॉडल।"
+      },
+      "gpt54": {
+        "label": "GPT-5.4",
+        "description": "उन्नत क्षमताओं के साथ नवीनतम फ्रंटियर मॉडल।"
       },
       "gpt52codex": {
-        "label": "gpt-5.2-codex",
-        "description": "नवीनतम फ्रंटियर एजेंटिक कोडिंग मॉडल।"
+        "label": "GPT-5.2-Codex",
+        "description": "फ्रंटियर एजेंटिक कोडिंग मॉडल।"
       },
       "gpt51codexMax": {
-        "label": "gpt-5.1-codex-max",
+        "label": "GPT-5.1-Codex-Max",
         "description": "Codex के लिए अनुकूलित फ्लैगशिप मॉडल, गहरी और तेज़ रीज़निंग।"
       },
-      "gpt51codexMini": {
-        "label": "gpt-5.1-codex-mini",
-        "description": "Codex के लिए अनुकूलित। सस्ता और तेज़, लेकिन कम सक्षम।"
+      "gpt54mini": {
+        "label": "GPT-5.4-Mini",
+        "description": "हल्का फ्रंटियर एजेंटिक कोडिंग मॉडल।"
+      },
+      "gpt53codexSpark": {
+        "label": "GPT-5.3-Codex-Spark",
+        "description": "अत्यंत तेज़ कोडिंग मॉडल।"
       },
       "gpt52": {
-        "label": "gpt-5.2",
-        "description": "ज्ञान में सुधार के साथ नवीनतम फ्रंटियर मॉडल।"
+        "label": "GPT-5.2",
+        "description": "पेशेवर काम और लंबे समय तक चलने वाले एजेंटों के लिए अनुकूलित।"
+      },
+      "gpt51codexMini": {
+        "label": "GPT-5.1-Codex-Mini",
+        "description": "Codex के लिए अनुकूलित। सस्ता और तेज़, लेकिन कम सक्षम।"
       }
     }
   },
@@ -1038,8 +1320,8 @@
     },
     "acceptEdits": {
       "label": "Auto Edit",
-      "tooltip": "Codex approval_policy=auto-edit – automatically applies file patches, still asks before shell commands.",
-      "description": "Auto-create and edit files via apply_patch while keeping command approvals."
+      "tooltip": "Codex approval_policy=on-request – asks for approval when needed",
+      "description": "Balanced option. Allows normal editing flow while still requiring approvals when needed."
     },
     "bypassPermissions": {
       "label": "Full Auto",
@@ -1052,7 +1334,7 @@
       "label": "Claude Code"
     },
     "codex": {
-      "label": "Codex Cli"
+      "label": "Codex"
     },
     "gemini": {
       "label": "Gemini Cli"
@@ -1074,6 +1356,13 @@
     "enhanceFailed": "Failed to enhance prompt",
     "emptyPrompt": "Please enter a prompt first",
     "copyEnhanced": "Copy Enhanced"
+  },
+  "fileContext": {
+    "placeholder": "File Context",
+    "enableTitle": "Enable File Context?",
+    "enableDescription": "When enabled, the currently opened file path in the editor will be sent to AI. Note: only the file path is transmitted, not the file content.",
+    "enable": "Enable",
+    "cancel": "Cancel"
   },
   "rewind": {
     "title": "फ़ाइलों को पिछली स्थिति में पुनर्स्थापित करें",
@@ -1168,5 +1457,38 @@
     "title": "नया क्या है",
     "close": "समझ गया",
     "page": "{{current}} / {{total}}"
+  },
+  "error": {
+    "providerNotConfigured": "प्रदाता कॉन्फ़िगर नहीं है",
+    "providerNotConfiguredDesc": "अभी तक कोई AI प्रदाता कॉन्फ़िगर नहीं किया गया है, या स्थानीय कॉन्फ़िगरेशन के उपयोग की अनुमति नहीं दी गई है। बातचीत शुरू करने से पहले कृपया प्रदाता प्रबंधन सेटिंग्स में सेटअप पूरा करें।",
+    "goToProviderSettings": "सेटिंग्स पर जाएं"
+  },
+  "errorDiagnostic": {
+    "copyCommand": "कॉपी करें",
+    "copied": "कॉपी किया गया",
+    "openDependencySettings": "निर्भरता प्रबंधन खोलें",
+    "recommended": "अनुशंसित",
+    "codexThreadResume": {
+      "title": "सत्र थ्रेड अब मान्य नहीं है",
+      "intro": "नया सत्र बनाने से यह समस्या हल हो जाएगी। वर्तमान सत्र का थ्रेड ID Codex सर्वर पर अब मौजूद नहीं है।",
+      "reason": "Codex कुछ समय बाद पुराने थ्रेड को हटा देता है, जिससे पिछले सत्र को फिर से शुरू करते समय यह त्रुटि हो सकती है।"
+    },
+    "sdkNativeBinaryMissing": {
+      "title": "SDK स्थापना अधूरी — नेटिव बाइनरी अनुपस्थित",
+      "intro": "यह Taobao npm मिरर की एक ज्ञात समस्या है (प्लगइन बग नहीं)। मिरर ने प्लेटफ़ॉर्म-विशिष्ट फ़ाइलों को पूरी तरह सिंक नहीं किया है। आप नीचे दिए गए विकल्पों में से किसी एक से इसे मैन्युअल रूप से हल कर सकते हैं:",
+      "reason": "Taobao मिरर के सिंक पूरा होने पर यह समस्या स्वतः ही गायब हो जाएगी — चिंता की कोई बात नहीं है।",
+      "solutions": {
+        "switchRegistry": {
+          "title": "विकल्प 1: अस्थायी रूप से आधिकारिक रजिस्ट्री पर स्विच करें और पुनः इंस्टॉल करें",
+          "step0": "1. अपने टर्मिनल में चलाएं (आधिकारिक npm रजिस्ट्री पर स्विच करें):",
+          "step1": "2. प्लगइन की निर्भरता प्रबंधन सेटिंग्स खोलें और पुनः इंस्टॉल पर क्लिक करें:",
+          "step2": "3. पुनः इंस्टॉलेशन पूरा होने के बाद, Taobao मिरर पर वापस स्विच करें:"
+        },
+        "downgrade": {
+          "title": "विकल्प 2: पुराने संस्करण पर वापस जाएं",
+          "step0": "निर्भरता प्रबंधन में SDK संस्करण को v0.2.112 या उससे पहले के संस्करण पर स्विच करें। स्विच करने के बाद IDEA को पुनरारंभ करें।"
+        }
+      }
+    }
   }
 }

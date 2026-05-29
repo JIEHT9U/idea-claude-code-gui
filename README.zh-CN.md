@@ -1,22 +1,30 @@
 <div align="center">
 
-# IDEA Claude Code GUI 插件
+# CC GUI（Claude or Codex）
 
-<img width="120" alt="Image" src="https://claudecodecn-1253302184.cos.ap-beijing.myqcloud.com/idea/idea-claude-code-gui-logo.png" />
+> 原名：Claude Code GUI
+
+<img width="120" alt="Image" src="./docs/images/idea-claude-code-gui-logo.png" />
 
 **简体中文** · [English](./README.md)
 
-![][github-contributors-shield] ![][github-forks-shield] ![][github-stars-shield] ![][github-issues-shield]
+<a href="https://trendshift.io/repositories/24968" target="_blank"><img src="https://trendshift.io/api/badge/repositories/24968" alt="zhukunpenglinyutong%2Fjetbrains-cc-gui | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
-<a href="https://trendshift.io/repositories/19332" target="_blank"><img src="https://trendshift.io/api/badge/repositories/19332" alt="zhukunpenglinyutong%2Fidea-claude-code-gui | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+![][github-contributors-shield] ![][github-forks-shield] ![][github-stars-shield] ![][github-issues-shield] ![][github-mit]
 
 </div>
 
+> 为规避Claude商标风险，本项目名称修改为CC GUI（原名：Claude Code GUI）；并更换LOGO减少中国元素；对于安全方面，后续每个小版本发版前都进行 /security-review 审查，每隔10个小版本进行一次整体的 claude-code-security 审查
+
 一个功能强大的 IntelliJ IDEA 插件，为开发者提供 **Claude Code** 和 **OpenAI Codex** 双 AI 工具的可视化操作界面，让 AI 辅助编程变得更加高效和直观。
 
-> AI 声明：本项目绝大部分代码由 Claude Code、Codex、Gemini、GLM 生成；本人还在学习中，非佬
+<img width="850" alt="Image" src="/docs/img/banner.png" />
 
-<img width="850" alt="Image" src="https://claudecodecn-1253302184.cos.ap-beijing.myqcloud.com/idea/v0.1.0/2.png" />
+---
+
+## 插件下载
+
+[CC GUI（Claude or Codex） 下载](https://plugins.jetbrains.com/plugin/29342-cc-gui-claude-or-codex-)
 
 ---
 
@@ -57,38 +65,7 @@
 
 ## 项目状态
 
-当前版本：**v0.1.5**（2026年1月18日更新）
-
-本次为最大的一次版本更新：113个文件改动，30次commit，新增代码13.6k，删除代码4.7k
-
-本次修改内容如下：
-
-- [x] P0（feat）Claude 计划模式 开放
-- [x] P0（fix）修复了 AskUserQuestion 弹窗异常问题
-- [x] P0（perf）优化了历史记录过多时候，输入框输入卡顿以及发送卡顿问题
-- [x] P0（fix）彻底解决了 Codex window下无法写入的问题
-- [x] P0（feat）支持了 Codex MCP功能
-- [x] P0（feat）支持了 Codex的AGENTS.md指令集合
-- [x] P1（feat）支持了 Codex自动注入当前活动文件内容
-- [x] P1（feat）按当前项目路径过滤Codex会话历史（之前是全都展示）
-- [x] P1（feat）实现todolist新UI交互
-- [x] P1（feat）实现 批量写入 和 批量读取 新交互
-- [x] P1（feat）流式输出时自动展开最新的思考块
-- [x] P1（refactor）拆分重构了输入框和对话过程的代码，使其后续更易维护
-- [x] P2（chore）预留了OpenCode支持
-- [x] P2（style）修改其他细节交互舒适性
-
-接下来将进行v0.1.6版本的开发
-
-v0.1.6版本，将带来更多功能，更好的性能 和 大家心心念念的 vscode端 和 客户端；
-
-项目处于活跃开发阶段，代码持续更新中。更多迭代进度请阅读 [CHANGELOG.md](CHANGELOG.md)
-
----
-
-## 插件下载
-
-[IDEA Claude Code GUI 下载](https://plugins.jetbrains.com/plugin/29342-claude-code-gui)
+项目处于活跃开发阶段，代码持续更新中。版本历史和迭代进度请阅读 [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
@@ -148,7 +125,7 @@ MIT
       <a href="https://github.com/zhukunpenglinyutong">
         <img src="https://avatars.githubusercontent.com/u/31264015?size=100" width="100" height="100" alt="zhukunpenglinyutong" style="border-radius: 50%; border: 3px solid #ff6b35; box-shadow: 0 0 15px rgba(255, 107, 53, 0.6);" />
       </a>
-      <div>🔥🔥🔥</div>
+      <div>⭐️⭐️⭐️</div>
     </td>
     <td align="center">
       <a href="https://github.com/M1sury">
@@ -159,7 +136,7 @@ MIT
       <a href="https://github.com/gadfly3173">
         <img src="https://avatars.githubusercontent.com/u/28685179?size=100" width="100" height="100" alt="gadfly3173" style="border-radius: 50%; border: 3px solid #ff6b35; box-shadow: 0 0 15px rgba(255, 107, 53, 0.6);" />
       </a>
-      <div">🔥🔥</div>
+      <div">🔥🔥🔥</div>
     </td>
     <td align="center">
       <a href="https://github.com/song782360037">
@@ -253,6 +230,23 @@ MIT
         <img src="https://avatars.githubusercontent.com/u/155488585?size=100" width="100" height="100" alt="dsudomoin" style="border-radius: 50%;" />
       </a>
     </td>
+    <td align="center">
+      <a href="https://github.com/serega0005">
+        <img src="https://avatars.githubusercontent.com/u/39858725?size=100" width="100" height="100" alt="serega0005" style="border-radius: 50%;" />
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/jhaan83">
+        <img src="https://avatars.githubusercontent.com/u/45828854?size=100" width="100" height="100" alt="jhaan83" style="border-radius: 50%;" />
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/Olexandr1904">
+        <img src="https://avatars.githubusercontent.com/u/12022163?size=100" width="100" height="100" alt="Olexandr1904" style="border-radius: 50%;" />
+      </a>
+    </td>
   </tr>
 </table>
 
@@ -264,31 +258,25 @@ MIT
 
 [查看赞助者列表 →](./SPONSORS.md)
 
-<table>
-  <tr>
-    <td align="center">
-      <img src="https://claudecodecn-1253302184.cos.ap-beijing.myqcloud.com/zfb.jpg" width="200" alt="支付宝">
-      <br>
-      <b>支付宝</b>
-    </td>
-    <td align="center">
-      <img src="https://claudecodecn-1253302184.cos.ap-beijing.myqcloud.com/wx.jpg" width="200" alt="微信">
-      <br>
-      <b>微信</b>
-    </td>
-    <td align="center">
-      <img src="https://claudecodecn-1253302184.cos.ap-beijing.myqcloud.com/paypal.png" width="200" alt="PayPal">
-      <br>
-      <b>PayPal</b>
-    </td>
-  </tr>
-</table>
-
 ---
 
 ## AtomGit
 
 https://atomgit.com/zhukunpenglinyutong/idea-claude-code-gui
+
+---
+
+## 友链
+
+感谢 [LINUX DO](https://linux.do/) 用户的支持与反馈
+
+感谢[AtomGit](https://atomgit.com/zhukunpenglinyutong/idea-claude-code-gui)平台G-Star认证
+
+---
+
+## 致谢
+
+最近有很多博主自发推荐本项目，心中十分感激，再次感谢《沉默的王二》《macrozheng》《JavaGuide》《Java知音》《鲲鹏talk 公众号》《程序员青戈》等博主推荐本项目，我会继续努力迭代，让大家用起来更舒适。
 
 ---
 
@@ -304,3 +292,4 @@ https://atomgit.com/zhukunpenglinyutong/idea-claude-code-gui
 [github-issues-shield]: https://img.shields.io/github/issues/zhukunpenglinyutong/idea-claude-code-gui?color=ff80eb&labelColor=black&style=flat-square
 [github-license-link]: https://github.com/zhukunpenglinyutong/idea-claude-code-gui/blob/main/LICENSE
 [github-stars-shield]: https://img.shields.io/github/stars/zhukunpenglinyutong/idea-claude-code-gui?color=ffcb47&labelColor=black&style=flat-square
+[github-mit]: https://img.shields.io/badge/github-MIT-blue?logo=github

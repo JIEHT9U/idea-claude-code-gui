@@ -3,15 +3,25 @@ package com.github.claudecodegui.settings;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.SystemInfo;
 
+import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Codex MCP Server Manager
@@ -28,7 +38,24 @@ import java.util.*;
  */
 public class CodexMcpServerManager {
     private static final Logger LOG = Logger.getInstance(CodexMcpServerManager.class);
+    private static final String MCP_INIT_REQUEST = "{\"jsonrpc\": \"2.0\","
+                                                  + "  \"id\": 1,"
+                                                  + "  \"method\": \"initialize\","
+                                                  + "  \"params\": {"
+                                                  + "    \"protocolVersion\": \"2024-11-05\","
+                                                  + "    \"capabilities\": {},"
+                                                  + "    \"clientInfo\": {"
+                                                  + "      \"name\": \"codemoss-status-check\","
+                                                  + "      \"version\": \"1.0.0\""
+                                                  + "    }"
+                                                  + "  }"
+                                                  + "}";
+    private static final String MCP_INITIALIZED_NOTIFICATION = "{\"jsonrpc\": \"2.0\","
+                                                             + "  \"method\": \"notifications/initialized\","
+                                                             + "  \"params\": {}"
+                                                             + "}";
     private static final int STATUS_CHECK_TIMEOUT_MS = 5000; // 5 seconds timeout for HTTP checks
+    private static final int STDIO_HANDSHAKE_TIMEOUT_MS = 3000; // 3 seconds timeout for STDIO checks
 
     private final CodexSettingsManager settingsManager;
 
@@ -538,14 +565,215 @@ public class CodexMcpServerManager {
 
         // Check if command exists on system PATH
         boolean commandExists = checkCommandExists(command);
-
         if (commandExists) {
-            // For STDIO servers, we can't really test if they start without actually starting them
-            // So we return "pending" to indicate configuration looks good but not actually tested
-            return "pending";
-        } else {
+            return checkStdioStatus(serverConfig, serverName, command);
+        }else {
+            LOG.info("[CodexMcpServerManager] Command not found in PATH for " + serverName + ": " + command);
             return "failed";
         }
+
+    }
+
+    /**
+     * Check STDIO server by starting the process and performing a handshake
+     */
+    private String checkStdioStatus(JsonObject serverConfig, String serverName, String command) {
+        List<String> cmd = new ArrayList<>();
+        cmd.add(command);
+        if (serverConfig.has("args") && serverConfig.get("args").isJsonArray()) {
+            JsonArray args = serverConfig.getAsJsonArray("args");
+            for (JsonElement arg : args) {
+                cmd.add(arg.getAsString());
+            }
+        }
+
+        Process process = null;
+        try {
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            pb.redirectErrorStream(false);
+            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+
+            if (serverConfig.has("cwd") && !serverConfig.get("cwd").isJsonNull()) {
+                String cwd = serverConfig.get("cwd").getAsString();
+                if (!cwd.isEmpty()) {
+                    pb.directory(new File(cwd));
+                }
+            }
+
+            if (serverConfig.has("env") && serverConfig.get("env").isJsonObject()) {
+                JsonObject env = serverConfig.getAsJsonObject("env");
+                for (Map.Entry<String, JsonElement> entry : env.entrySet()) {
+                    pb.environment().put(entry.getKey(), entry.getValue().getAsString());
+                }
+            }
+
+            process = pb.start();
+            return performStdioHandshake(process, serverName);
+        } catch (Exception e) {
+            LOG.info("[CodexMcpServerManager] Failed to start STDIO server " + serverName + ": " + e.getMessage());
+            return "failed";
+        } finally {
+            if (process != null) {
+                try {
+                    process.getInputStream().close();
+                } catch (IOException ignored) {
+                }
+                try {
+                    process.getOutputStream().close();
+                } catch (IOException ignored) {
+                }
+                try {
+                    process.getErrorStream().close();
+                } catch (IOException ignored) {
+                }
+                if (process.isAlive()){
+                    process.destroy();
+                    try {
+                        if (!process.waitFor(300, TimeUnit.MILLISECONDS)) {
+                            process.destroyForcibly();
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Perform a simple MCP initialize handshake over STDIO to verify the server is working.
+     */
+    private String performStdioHandshake(Process process, String serverName) {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            writeMcpStdioMessage(process.getOutputStream(), MCP_INIT_REQUEST);
+
+            Future<JsonObject> responseFuture = executor.submit(() -> readInitializeResponse(process));
+            JsonObject response = responseFuture.get(STDIO_HANDSHAKE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+
+            if (response == null) {
+                if (!process.isAlive()) {
+                    int code = process.exitValue();
+                    LOG.info("[CodexMcpServerManager] STDIO server " + serverName + " exited before handshake (code=" + code + ")");
+                } else {
+                    LOG.info("[CodexMcpServerManager] STDIO handshake timeout for " + serverName);
+                }
+                return "failed";
+            }
+
+            if (response.has("error")) {
+                LOG.info("[CodexMcpServerManager] Error response from STDIO server " + serverName + ": " + response.get("error"));
+                return "failed";
+            }
+
+            if (response.has("result")) {
+                try {
+                    writeMcpStdioMessage(process.getOutputStream(), MCP_INITIALIZED_NOTIFICATION);
+                } catch (IOException e) {
+                    LOG.debug("[CodexMcpServerManager] Failed to send initialized notification for " + serverName + ": " + e.getMessage());
+                }
+                return "connected";
+            }
+
+            LOG.info("[CodexMcpServerManager] Invalid initialize response from " + serverName);
+            return "failed";
+        } catch (TimeoutException e) {
+            LOG.info("[CodexMcpServerManager] Handshake timeout for " + serverName);
+            return "failed";
+        } catch (Exception e) {
+            LOG.info("[CodexMcpServerManager] Handshake failed for " + serverName + ": " + e.getMessage());
+            return "failed";
+        } finally {
+            executor.shutdownNow();
+            try {
+                executor.awaitTermination(1, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /**
+     * Read initialize response from the STDIO MCP server process.
+     */
+    private JsonObject readInitializeResponse(Process process) {
+        try {
+            return readMcpStdioMessage(process.getInputStream());
+        } catch (IOException e) {
+            LOG.debug("[CodexMcpServerManager] IO error reading STDIO response: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private void writeMcpStdioMessage(java.io.OutputStream outputStream, String jsonPayload) throws IOException {
+        byte[] payloadBytes = jsonPayload.getBytes(StandardCharsets.UTF_8);
+        String header = "Content-Length: " + payloadBytes.length + "\r\n\r\n";
+        outputStream.write(header.getBytes(StandardCharsets.US_ASCII));
+        outputStream.write(payloadBytes);
+        outputStream.flush();
+    }
+
+    private JsonObject readMcpStdioMessage(InputStream inputStream) throws IOException {
+        Map<String, String> headers = new LinkedHashMap<>();
+        String line;
+        while ((line = readAsciiLine(inputStream)) != null) {
+            if (line.isEmpty()) {
+                break;
+            }
+
+            int separatorIndex = line.indexOf(':');
+            if (separatorIndex <= 0) {
+                continue;
+            }
+
+            String name = line.substring(0, separatorIndex).trim().toLowerCase(Locale.ROOT);
+            String value = line.substring(separatorIndex + 1).trim();
+            headers.put(name, value);
+        }
+
+        String contentLengthValue = headers.get("content-length");
+        if (contentLengthValue == null || contentLengthValue.isEmpty()) {
+            return null;
+        }
+
+        int contentLength;
+        try {
+            contentLength = Integer.parseInt(contentLengthValue);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+
+        byte[] payload = inputStream.readNBytes(contentLength);
+        if (payload.length != contentLength) {
+            return null;
+        }
+
+        try {
+            return JsonParser.parseString(new String(payload, StandardCharsets.UTF_8)).getAsJsonObject();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String readAsciiLine(InputStream inputStream) throws IOException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        int current;
+        boolean sawAnyByte = false;
+        while ((current = inputStream.read()) != -1) {
+            sawAnyByte = true;
+            if (current == '\n') {
+                break;
+            }
+            if (current != '\r') {
+                buffer.write(current);
+            }
+        }
+
+        if (!sawAnyByte && current == -1) {
+            return null;
+        }
+
+        return buffer.toString(StandardCharsets.US_ASCII);
     }
 
     /**
@@ -570,8 +798,13 @@ public class CodexMcpServerManager {
 
         try {
             Process process = pb.start();
-            int exitCode = process.waitFor();
-            return exitCode == 0;
+            boolean finished = process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                LOG.warn("[CodexMcpServerManager] Command check timed out for: " + commandName);
+                return false;
+            }
+            return process.exitValue() == 0;
         } catch (Exception e) {
             return false;
         }

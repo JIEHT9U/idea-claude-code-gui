@@ -1,6 +1,6 @@
 package com.github.claudecodegui.settings;
 
-import com.github.claudecodegui.ClaudeCodeGuiBundle;
+import com.github.claudecodegui.i18n.ClaudeCodeGuiBundle;
 import com.github.claudecodegui.bridge.NodeDetector;
 import com.github.claudecodegui.model.DeleteResult;
 import com.google.gson.Gson;
@@ -27,7 +27,9 @@ import java.util.function.Function;
 public class ProviderManager {
     private static final Logger LOG = Logger.getInstance(ProviderManager.class);
     private static final String BACKUP_FILE_NAME = "config.json.bak";
+    public static final String DISABLED_PROVIDER_ID = "__disabled__";
     public static final String LOCAL_SETTINGS_PROVIDER_ID = "__local_settings_json__";
+    public static final String CLI_LOGIN_PROVIDER_ID = "__cli_login__";
 
     private final Gson gson;
     private final Function<Void, JsonObject> configReader;
@@ -54,19 +56,14 @@ public class ProviderManager {
     public List<JsonObject> getClaudeProviders() {
         JsonObject config = configReader.apply(null);
         List<JsonObject> result = new ArrayList<>();
-
-        if (!config.has("claude")) {
-            JsonObject claude = new JsonObject();
-            claude.add("providers", new JsonObject());
-            claude.addProperty("current", "");
-            config.add("claude", claude);
-        }
-
+        String currentId = normalizeCurrentClaudeProviderId(config);
         JsonObject claude = config.getAsJsonObject("claude");
-        String currentId = claude.has("current") ? claude.get("current").getAsString() : null;
 
         // Add local provider using the extracted method
         result.add(createLocalProviderObject(LOCAL_SETTINGS_PROVIDER_ID.equals(currentId)));
+
+        // Add CLI login provider
+        result.add(createCliLoginProviderObject(CLI_LOGIN_PROVIDER_ID.equals(currentId)));
 
         if (!claude.has("providers")) {
             return result;
@@ -74,16 +71,42 @@ public class ProviderManager {
 
         JsonObject providers = claude.getAsJsonObject("providers");
 
-        for (String key : providers.keySet()) {
-            JsonObject provider = providers.getAsJsonObject(key);
-            if (!provider.has("id")) {
-                provider.addProperty("id", key);
+        // Get provider order from config, or use default order (by key)
+        List<String> orderedIds = ProviderOrderHelper.getProviderOrder(claude, providers.keySet());
+
+        // Add providers in order
+        for (String id : orderedIds) {
+            if (providers.has(id)) {
+                JsonObject provider = providers.getAsJsonObject(id).deepCopy();
+                if (!provider.has("id")) {
+                    provider.addProperty("id", id);
+                }
+                provider.addProperty("isActive", id.equals(currentId));
+                result.add(provider);
             }
-            provider.addProperty("isActive", key.equals(currentId));
-            result.add(provider);
         }
 
         return result;
+    }
+
+    /**
+     * Save provider order.
+     */
+    public void saveProviderOrder(List<String> orderedIds) throws IOException {
+        JsonObject config = configReader.apply(null);
+
+        if (!config.has("claude")) {
+            JsonObject claude = new JsonObject();
+            claude.add("providers", new JsonObject());
+            claude.addProperty("current", LOCAL_SETTINGS_PROVIDER_ID);
+            config.add("claude", claude);
+        }
+
+        JsonObject claude = config.getAsJsonObject("claude");
+        ProviderOrderHelper.setProviderOrder(claude, orderedIds);
+
+        configWriter.accept(config);
+        LOG.info("[ProviderManager] Saved provider order: " + orderedIds);
     }
 
     /**
@@ -91,17 +114,17 @@ public class ProviderManager {
      */
     public JsonObject getActiveClaudeProvider() {
         JsonObject config = configReader.apply(null);
-
-        if (!config.has("claude")) {
-            return null;
-        }
-
+        String currentId = normalizeCurrentClaudeProviderId(config);
         JsonObject claude = config.getAsJsonObject("claude");
-        String currentId = claude.has("current") ? claude.get("current").getAsString() : null;
 
         // Return local provider using the extracted method
         if (LOCAL_SETTINGS_PROVIDER_ID.equals(currentId)) {
             return createLocalProviderObject(true);
+        }
+
+        // Return CLI login provider
+        if (CLI_LOGIN_PROVIDER_ID.equals(currentId)) {
+            return createCliLoginProviderObject(true);
         }
 
         if (!claude.has("providers")) {
@@ -136,7 +159,7 @@ public class ProviderManager {
         if (!config.has("claude")) {
             JsonObject claude = new JsonObject();
             claude.add("providers", new JsonObject());
-            claude.addProperty("current", "");
+            claude.addProperty("current", LOCAL_SETTINGS_PROVIDER_ID);
             config.add("claude", claude);
         }
 
@@ -176,7 +199,7 @@ public class ProviderManager {
         if (!config.has("claude")) {
             JsonObject claude = new JsonObject();
             claude.add("providers", new JsonObject());
-            claude.addProperty("current", "");
+            claude.addProperty("current", LOCAL_SETTINGS_PROVIDER_ID);
             config.add("claude", claude);
         }
 
@@ -242,6 +265,7 @@ public class ProviderManager {
 
     /**
      * Delete a provider (returns DeleteResult with detailed error information).
+     *
      * @param id the provider ID
      * @return DeleteResult containing the operation result and error details
      */
@@ -256,10 +280,10 @@ public class ProviderManager {
 
             if (!config.has("claude")) {
                 return DeleteResult.failure(
-                    DeleteResult.ErrorType.FILE_NOT_FOUND,
-                    "No claude configuration found",
-                    configFilePath.toString(),
-                    "Please add at least one provider configuration first"
+                        DeleteResult.ErrorType.FILE_NOT_FOUND,
+                        "No claude configuration found",
+                        configFilePath.toString(),
+                        "Please add at least one provider configuration first"
                 );
             }
 
@@ -268,10 +292,10 @@ public class ProviderManager {
 
             if (!providers.has(id)) {
                 return DeleteResult.failure(
-                    DeleteResult.ErrorType.FILE_NOT_FOUND,
-                    "Provider with id '" + id + "' not found",
-                    null,
-                    "Please verify that the provider ID is correct"
+                        DeleteResult.ErrorType.FILE_NOT_FOUND,
+                        "Provider with id '" + id + "' not found",
+                        null,
+                        "Please verify that the provider ID is correct"
                 );
             }
 
@@ -296,9 +320,12 @@ public class ProviderManager {
                     LOG.info("[ProviderManager] Switched to provider: " + firstKey);
                 } else {
                     claude.addProperty("current", "");
-                    LOG.info("[ProviderManager] No remaining providers");
+                    LOG.info("[ProviderManager] No remaining providers, leaving Claude provider inactive");
                 }
             }
+
+            // Remove deleted provider from providerOrder to avoid stale IDs
+            ProviderOrderHelper.removeFromOrder(claude, id);
 
             // Write config
             configWriter.accept(config);
@@ -353,7 +380,27 @@ public class ProviderManager {
     }
 
     /**
+     * Leave Claude with no active provider.
+     */
+    public void deactivateClaudeProvider() throws IOException {
+        JsonObject config = configReader.apply(null);
+
+        if (!config.has("claude")) {
+            JsonObject claude = new JsonObject();
+            claude.add("providers", new JsonObject());
+            claude.addProperty("current", "");
+            config.add("claude", claude);
+        } else {
+            config.getAsJsonObject("claude").addProperty("current", "");
+        }
+
+        configWriter.accept(config);
+        LOG.info("[ProviderManager] Claude provider deactivated");
+    }
+
+    /**
      * Batch-save provider configurations.
+     *
      * @param providers the list of providers
      * @return the number of providers saved successfully
      */
@@ -419,10 +466,12 @@ public class ProviderManager {
         JsonObject config = configReader.apply(null);
 
         if (config.has("claude") &&
-            config.getAsJsonObject("claude").has("current") &&
-            LOCAL_SETTINGS_PROVIDER_ID.equals(config.getAsJsonObject("claude").get("current").getAsString())) {
-            LOG.info("[ProviderManager] Local settings.json provider active, skipping sync to settings.json");
-            return;
+                config.getAsJsonObject("claude").has("current")) {
+            String currentId = config.getAsJsonObject("claude").get("current").getAsString();
+            if (LOCAL_SETTINGS_PROVIDER_ID.equals(currentId) || CLI_LOGIN_PROVIDER_ID.equals(currentId)) {
+                LOG.info("[ProviderManager] " + currentId + " provider active, skipping sync to settings.json");
+                return;
+            }
         }
 
         JsonObject activeProvider = getActiveClaudeProvider();
@@ -436,6 +485,7 @@ public class ProviderManager {
     /**
      * Parse provider configurations from cc-switch.db.
      * Uses a Node.js script to read the database (cross-platform compatible, avoids JDBC classloader issues).
+     *
      * @param dbPath the database file path
      * @return the list of parsed providers
      */
@@ -462,28 +512,37 @@ public class ProviderManager {
                 com.intellij.ide.util.PropertiesComponent props = com.intellij.ide.util.PropertiesComponent.getInstance();
                 String savedNodePath = props.getValue("claude.code.node.path");
                 if (savedNodePath != null && !savedNodePath.trim().isEmpty()) {
-                    // Validate whether the user-configured path is valid
-                    File nodeFile = new File(savedNodePath.trim());
-                    if (nodeFile.exists() && nodeFile.canExecute()) {
-                        nodePath = savedNodePath.trim();
-                        LOG.info("[ProviderManager] Using user-configured Node.js path: " + nodePath);
+                    String trimmed = savedNodePath.trim();
+                    // WSL paths (Unix-style) cannot be checked with File.exists() on the Windows JVM.
+                    // Validate via NodeDetector.isWslPath() first, then fall back to File checks.
+                    if (NodeDetector.isWslPath(trimmed)) {
+                        nodePath = trimmed;
+                        LOG.info("[ProviderManager] Using user-configured WSL Node.js path: " + nodePath);
                     } else {
-                        LOG.info("[ProviderManager] User-configured Node.js path is invalid, will auto-detect: " + savedNodePath);
+                        File nodeFile = new File(trimmed);
+                        if (nodeFile.exists() && nodeFile.canExecute()) {
+                            nodePath = trimmed;
+                            LOG.info("[ProviderManager] Using user-configured Node.js path: " + nodePath);
+                        } else {
+                            LOG.info("[ProviderManager] User-configured Node.js path is invalid, will auto-detect: " + savedNodePath);
+                        }
                     }
                 }
             } catch (Exception e) {
                 LOG.info("[ProviderManager] Failed to read user-configured Node.js path: " + e.getMessage());
             }
 
-            // If the user hasn't configured a path or the config is invalid, auto-detect via NodeDetector
+            // If the user hasn't configured a path or the config is invalid, auto-detect via shared NodeDetector
             if (nodePath == null) {
-                NodeDetector nodeDetector = new NodeDetector();
+                NodeDetector nodeDetector = NodeDetector.getInstance();
                 nodePath = nodeDetector.findNodeExecutable();
                 LOG.info("[ProviderManager] Auto-detected Node.js path: " + nodePath);
             }
 
-            // Build the Node.js command
-            ProcessBuilder pb = new ProcessBuilder(nodePath, scriptPath, dbPath);
+            // Build the Node.js command (WSL-aware: prepend 'wsl' and convert paths when needed)
+            List<String> command = NodeDetector.buildNodeScriptCommand(nodePath, scriptPath);
+            command.add(NodeDetector.isWslPath(nodePath) ? NodeDetector.convertToWslPath(dbPath) : dbPath);
+            ProcessBuilder pb = new ProcessBuilder(command);
             pb.directory(new File(aiBridgePath));
             pb.redirectErrorStream(true); // Merge stderr into stdout
 
@@ -591,8 +650,8 @@ public class ProviderManager {
      */
     private JsonObject extractEnvConfig(JsonObject provider) {
         if (provider == null ||
-            !provider.has("settingsConfig") ||
-            provider.get("settingsConfig").isJsonNull()) {
+                !provider.has("settingsConfig") ||
+                provider.get("settingsConfig").isJsonNull()) {
             return null;
         }
         JsonObject settingsConfig = provider.getAsJsonObject("settingsConfig");
@@ -603,7 +662,10 @@ public class ProviderManager {
     }
 
     /**
-     * Create local provider object with internationalized name and description
+     * Create local provider object with internationalized name and description.
+     * When active, includes settingsConfig from ~/.claude/settings.json so the
+     * webview can sync model mapping (env vars) without an extra round-trip.
+     *
      * @param isActive whether this provider is currently active
      * @return JsonObject representing the local provider
      */
@@ -614,35 +676,108 @@ public class ProviderManager {
         localProvider.addProperty("isActive", isActive);
         localProvider.addProperty("isLocalProvider", true);
 
-        // Read env from local settings.json, only extract model-mapping related keys for frontend display
-        try {
-            JsonObject claudeSettings = claudeSettingsManager.readClaudeSettings();
-            if (claudeSettings != null && claudeSettings.has("env")) {
-                JsonObject fullEnv = claudeSettings.getAsJsonObject("env");
-                JsonObject filteredEnv = new JsonObject();
-                String[] modelMappingKeys = {
-                    "ANTHROPIC_MODEL",
-                    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                    "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                    "ANTHROPIC_DEFAULT_OPUS_MODEL"
-                };
-                for (String key : modelMappingKeys) {
-                    if (fullEnv.has(key) && !fullEnv.get(key).isJsonNull()) {
-                        filteredEnv.add(key, fullEnv.get(key));
+        // Include ONLY model-mapping env vars from ~/.claude/settings.json so the
+        // webview can display mapped model names. Credentials (ANTHROPIC_AUTH_TOKEN)
+        // are intentionally excluded to comply with Marketplace credential policies.
+        if (isActive) {
+            try {
+                JsonObject claudeSettings = claudeSettingsManager.readClaudeSettings();
+                if (claudeSettings != null && claudeSettings.has("env")) {
+                    JsonObject fullEnv = claudeSettings.getAsJsonObject("env");
+                    JsonObject safeEnv = new JsonObject();
+                    // Only copy model-mapping keys — never credentials
+                    String[] modelMappingKeys = {
+                        "ANTHROPIC_MODEL",
+                        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                        "ANTHROPIC_DEFAULT_HAIKU_MODEL"
+                    };
+                    for (String key : modelMappingKeys) {
+                        if (fullEnv.has(key) && !fullEnv.get(key).isJsonNull()) {
+                            safeEnv.add(key, fullEnv.get(key));
+                        }
+                    }
+                    if (safeEnv.size() > 0) {
+                        JsonObject settingsConfig = new JsonObject();
+                        settingsConfig.add("env", safeEnv);
+                        localProvider.add("settingsConfig", settingsConfig);
                     }
                 }
-                if (filteredEnv.size() > 0) {
-                    JsonObject settingsConfig = new JsonObject();
-                    settingsConfig.add("env", filteredEnv);
-                    localProvider.add("settingsConfig", settingsConfig);
-                    LOG.debug("[ProviderManager] Included model mapping env from local settings.json");
-                }
+            } catch (Exception e) {
+                LOG.warn("[ProviderManager] Failed to read settings.json for local provider: " + e.getMessage());
             }
-        } catch (Exception e) {
-            LOG.warn("[ProviderManager] Failed to read local settings.json env: " + e.getMessage());
         }
 
         return localProvider;
+    }
+
+    /**
+     * Create CLI login provider object with internationalized name and description
+     *
+     * @param isActive whether this provider is currently active
+     * @return JsonObject representing the CLI login provider
+     */
+    private JsonObject createCliLoginProviderObject(boolean isActive) {
+        JsonObject cliLoginProvider = new JsonObject();
+        cliLoginProvider.addProperty("id", CLI_LOGIN_PROVIDER_ID);
+        cliLoginProvider.addProperty("name", ClaudeCodeGuiBundle.message("provider.cliLogin.name"));
+        cliLoginProvider.addProperty("isActive", isActive);
+        cliLoginProvider.addProperty("isCliLoginProvider", true);
+        return cliLoginProvider;
+    }
+
+    /**
+     * Normalize the current Claude provider.
+     * Preserve an explicit empty current value so Claude can remain intentionally inactive.
+     *
+     * @param config current plugin configuration
+     * @return available current provider id
+     */
+    private String normalizeCurrentClaudeProviderId(JsonObject config) {
+        boolean changed = false;
+        JsonObject claude;
+
+        if (!config.has("claude") || config.get("claude").isJsonNull()) {
+            claude = new JsonObject();
+            config.add("claude", claude);
+            changed = true;
+        } else {
+            claude = config.getAsJsonObject("claude");
+        }
+
+        if (!claude.has("providers") || claude.get("providers").isJsonNull()) {
+            claude.add("providers", new JsonObject());
+            changed = true;
+        }
+
+        JsonObject providers = claude.getAsJsonObject("providers");
+        boolean hasExplicitCurrent = claude.has("current") && !claude.get("current").isJsonNull();
+        String currentId = null;
+        if (hasExplicitCurrent) {
+            currentId = claude.get("current").getAsString();
+        }
+
+        boolean invalidCurrent = currentId == null
+                || (!LOCAL_SETTINGS_PROVIDER_ID.equals(currentId)
+                    && !CLI_LOGIN_PROVIDER_ID.equals(currentId)
+                    && !providers.has(currentId));
+
+        // Marketplace-safe default:
+        // - Preserve an explicit local settings provider selection.
+        // - If current is missing entirely and there are saved providers, select the first one.
+        // - If current is explicitly blank, leave Claude inactive until the user explicitly chooses a mode.
+        if (invalidCurrent) {
+            currentId = !hasExplicitCurrent && providers.size() > 0
+                    ? providers.keySet().iterator().next()
+                    : "";
+            claude.addProperty("current", currentId);
+            changed = true;
+        }
+
+        if (changed) {
+            configWriter.accept(config);
+        }
+        return currentId;
     }
 
     public boolean isLocalSettingsProvider(String providerId) {
@@ -659,5 +794,17 @@ public class ProviderManager {
             return false;
         }
         return LOCAL_SETTINGS_PROVIDER_ID.equals(claude.get("current").getAsString());
+    }
+
+    public boolean isCliLoginProviderActive() {
+        JsonObject config = configReader.apply(null);
+        if (!config.has("claude")) {
+            return false;
+        }
+        JsonObject claude = config.getAsJsonObject("claude");
+        if (!claude.has("current")) {
+            return false;
+        }
+        return CLI_LOGIN_PROVIDER_ID.equals(claude.get("current").getAsString());
     }
 }

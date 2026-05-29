@@ -35,7 +35,7 @@ describe('useKeyboardHandler', () => {
 
     const { result } = renderHook(() =>
       useKeyboardHandler({
-        isComposing: false,
+        isComposingRef: { current: false },
         lastCompositionEndTimeRef: { current: Date.now() - 1000 },
         sendShortcut: 'enter',
         sdkStatusLoading: false,
@@ -44,6 +44,7 @@ describe('useKeyboardHandler', () => {
         commandCompletion: { isOpen: false, handleKeyDown: vi.fn(() => false) },
         agentCompletion: { isOpen: false, handleKeyDown: vi.fn(() => false) },
         promptCompletion: { isOpen: false, handleKeyDown: vi.fn(() => false) },
+        dollarCommandCompletion: { isOpen: false, handleKeyDown: vi.fn(() => false) },
         handleMacCursorMovement: vi.fn(() => false),
         handleHistoryKeyDown: vi.fn(() => false),
         completionSelectedRef,
@@ -66,7 +67,7 @@ describe('useKeyboardHandler', () => {
 
     const { result } = renderHook(() =>
       useKeyboardHandler({
-        isComposing: false,
+        isComposingRef: { current: false },
         lastCompositionEndTimeRef: { current: Date.now() - 1000 },
         sendShortcut: 'enter',
         sdkStatusLoading: false,
@@ -75,6 +76,7 @@ describe('useKeyboardHandler', () => {
         commandCompletion: { isOpen: false, handleKeyDown: vi.fn(() => false) },
         agentCompletion: { isOpen: false, handleKeyDown: vi.fn(() => false) },
         promptCompletion: { isOpen: false, handleKeyDown: vi.fn(() => false) },
+        dollarCommandCompletion: { isOpen: false, handleKeyDown: vi.fn(() => false) },
         handleMacCursorMovement: vi.fn(() => false),
         handleHistoryKeyDown: vi.fn(() => false),
         completionSelectedRef,
@@ -98,7 +100,7 @@ describe('useKeyboardHandler', () => {
 
     const { result } = renderHook(() =>
       useKeyboardHandler({
-        isComposing: false,
+        isComposingRef: { current: false },
         lastCompositionEndTimeRef: { current: Date.now() - 1000 },
         sendShortcut: 'enter',
         sdkStatusLoading: false,
@@ -107,6 +109,7 @@ describe('useKeyboardHandler', () => {
         commandCompletion: { isOpen: false, handleKeyDown: vi.fn(() => false) },
         agentCompletion: { isOpen: false, handleKeyDown: vi.fn(() => false) },
         promptCompletion: { isOpen: false, handleKeyDown: vi.fn(() => false) },
+        dollarCommandCompletion: { isOpen: false, handleKeyDown: vi.fn(() => false) },
         handleMacCursorMovement: vi.fn(() => false),
         handleHistoryKeyDown: vi.fn(() => false),
         completionSelectedRef,
@@ -121,4 +124,3 @@ describe('useKeyboardHandler', () => {
     expect(submittedOnEnterRef.current).toBe(false);
   });
 });
-

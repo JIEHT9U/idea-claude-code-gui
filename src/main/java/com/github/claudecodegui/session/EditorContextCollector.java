@@ -1,7 +1,9 @@
 package com.github.claudecodegui.session;
 
 import com.github.claudecodegui.handler.context.ContextCollector;
+import com.github.claudecodegui.handler.context.WorkspaceContextCollector;
 import com.github.claudecodegui.util.EditorFileUtils;
+import com.github.claudecodegui.util.IgnoreRuleMatcher;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.intellij.openapi.application.ApplicationManager;
@@ -20,6 +22,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Editor context collector.
  * Collects context information from the IDE editor (open files, selected code, etc.).
+ * Also collects workspace/multi-project information when the workspace plugin is available.
  */
 public class EditorContextCollector {
     private static final Logger LOG = Logger.getInstance(EditorContextCollector.class);
@@ -27,6 +30,7 @@ public class EditorContextCollector {
     private final Project project;
     private boolean psiContextEnabled = true;
     private boolean autoOpenFileEnabled = true;
+    private boolean workspaceContextEnabled = true;
 
     private boolean isQuickFix = false;
 
@@ -48,6 +52,14 @@ public class EditorContextCollector {
      */
     public void setAutoOpenFileEnabled(boolean enabled) {
         this.autoOpenFileEnabled = enabled;
+    }
+
+    /**
+     * Set whether workspace context collection is enabled.
+     * When enabled, multi-project workspace information is collected and added to context.
+     */
+    public void setWorkspaceContextEnabled(boolean enabled) {
+        this.workspaceContextEnabled = enabled;
     }
 
     /**
@@ -114,9 +126,16 @@ public class EditorContextCollector {
         List<String> allOpenedFiles = EditorFileUtils.getOpenedFiles(project);
         Map<String, Object> selectionInfo = EditorFileUtils.getSelectedCodeInfo(project);
 
+        // Get cached .gitignore matcher for filtering sensitive files
+        IgnoreRuleMatcher gitIgnoreMatcher = IgnoreRuleMatcher.forProjectSafe(project.getBasePath());
+
         JsonObject openedFilesJson = new JsonObject();
 
-        if (activeFile != null) {
+        // Check if the active file is ignored by .gitignore
+        boolean activeFileIgnored = activeFile != null && gitIgnoreMatcher != null
+                && gitIgnoreMatcher.isFileIgnored(activeFile);
+
+        if (activeFile != null && !activeFileIgnored) {
             // Add the currently active file path
             openedFilesJson.addProperty("active", activeFile);
             LOG.debug("Current active file: " + activeFile);
@@ -133,7 +152,7 @@ public class EditorContextCollector {
             }
 
             // Collect PSI semantic context (all files)
-            if (psiContextEnabled && editor != null && activeFile != null) {
+            if (psiContextEnabled && editor != null) {
                 try {
                     ContextCollector semanticCollector = new ContextCollector();
                     JsonObject semanticContext = semanticCollector.collectSemanticContext(editor, project);
@@ -148,12 +167,15 @@ public class EditorContextCollector {
                     LOG.warn("Failed to collect PSI semantic context: " + e.getMessage());
                 }
             }
+        } else if (activeFileIgnored) {
+            LOG.debug("Active file is .gitignore'd, skipping: " + activeFile);
         }
 
-        // Add other open files (excluding the active file to avoid duplication)
+        // Add other open files (excluding the active file and .gitignore'd files)
         JsonArray othersArray = new JsonArray();
         for (String file : allOpenedFiles) {
-            if (!file.equals(activeFile)) {
+            if (!file.equals(activeFile)
+                    && (gitIgnoreMatcher == null || !gitIgnoreMatcher.isFileIgnored(file))) {
                 othersArray.add(file);
             }
         }
@@ -162,10 +184,39 @@ public class EditorContextCollector {
             LOG.debug("Other opened files count: " + othersArray.size());
         }
 
+        // Collect workspace/multi-project context
+        if (workspaceContextEnabled) {
+            try {
+                JsonObject workspaceContext = WorkspaceContextCollector.collectWorkspaceContext(project);
+                if (workspaceContext != null && workspaceContext.size() > 0) {
+                    // Merge workspace context into main object
+                    for (String key : workspaceContext.keySet()) {
+                        openedFilesJson.add(key, workspaceContext.get(key));
+                    }
+                    LOG.debug("Workspace context merged: isWorkspace="
+                        + (workspaceContext.has("isWorkspace")
+                            ? workspaceContext.get("isWorkspace").getAsBoolean() : false));
+
+                    // Determine which subproject the active file belongs to
+                    if (activeFile != null && workspaceContext.has("isWorkspace")
+                            && workspaceContext.get("isWorkspace").getAsBoolean()) {
+                        String subproject = WorkspaceContextCollector.getSubprojectForFile(project, activeFile);
+                        if (subproject != null) {
+                            openedFilesJson.addProperty("activeSubproject", subproject);
+                            LOG.debug("Active file belongs to subproject: " + subproject);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                LOG.warn("Failed to collect workspace context: " + e.getMessage());
+            }
+        }
+
         if (isQuickFix) {
             openedFilesJson.addProperty("isQuickFix", true);
         }
 
         return openedFilesJson;
     }
+
 }

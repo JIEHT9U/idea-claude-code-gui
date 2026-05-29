@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { AgentConfig } from '../../../types/agent';
+import type { ImportPreviewResult, ConflictStrategy } from '../../../types/import';
 
 const sendToJava = (message: string) => {
   if (window.sendToJava) {
@@ -18,12 +20,22 @@ export interface DeleteAgentConfirmState {
   agent: AgentConfig | null;
 }
 
+export interface ImportPreviewDialogState {
+  isOpen: boolean;
+  previewData: ImportPreviewResult<AgentConfig> | null;
+}
+
+export interface ExportDialogState {
+  isOpen: boolean;
+}
+
 export interface UseAgentManagementOptions {
   onError?: (message: string) => void;
   onSuccess?: (message: string) => void;
 }
 
 export function useAgentManagement(options: UseAgentManagementOptions = {}) {
+  const { t } = useTranslation();
   const { onSuccess } = options;
 
   // Timeout timer reference (using useRef to avoid global variable pollution)
@@ -43,6 +55,17 @@ export function useAgentManagement(options: UseAgentManagementOptions = {}) {
   const [deleteAgentConfirm, setDeleteAgentConfirm] = useState<DeleteAgentConfirmState>({
     isOpen: false,
     agent: null,
+  });
+
+  // Import preview dialog state
+  const [importPreviewDialog, setImportPreviewDialog] = useState<ImportPreviewDialogState>({
+    isOpen: false,
+    previewData: null,
+  });
+
+  // Export dialog state
+  const [exportDialog, setExportDialog] = useState<ExportDialogState>({
+    isOpen: false,
   });
 
   // Load agent list (with retry mechanism)
@@ -163,14 +186,94 @@ export function useAgentManagement(options: UseAgentManagementOptions = {}) {
     (result: { success: boolean; operation?: string; error?: string }) => {
       if (result.success) {
         const operationMessages: Record<string, string> = {
-          add: '智能体已添加',
-          update: '智能体已更新',
-          delete: '智能体已删除',
+          add: t('settings.agent.addSuccess'),
+          update: t('settings.agent.updateSuccess'),
+          delete: t('settings.agent.deleteSuccess'),
         };
-        onSuccess?.(operationMessages[result.operation || ''] || '操作成功');
+        onSuccess?.(operationMessages[result.operation || ''] || t('settings.agent.operationSuccess'));
       }
     },
-    [onSuccess]
+    [onSuccess, t]
+  );
+
+  // Open export dialog
+  const handleExportAgents = useCallback(() => {
+    setExportDialog({ isOpen: true });
+  }, []);
+
+  // Close export dialog
+  const handleCloseExportDialog = useCallback(() => {
+    setExportDialog({ isOpen: false });
+  }, []);
+
+  // Confirm export with selected IDs
+  const handleConfirmExport = useCallback((selectedIds: string[]) => {
+    const exportData = {
+      agentIds: selectedIds,
+    };
+    sendToJava(`export_agents:${JSON.stringify(exportData)}`);
+    setExportDialog({ isOpen: false });
+  }, []);
+
+  // Import agents from file
+  const handleImportAgentsFile = useCallback(() => {
+    sendToJava('import_agents_file:');
+  }, []);
+
+  // Handle import preview result (used by window callback)
+  const handleAgentImportPreviewResult = useCallback(
+    (previewData: ImportPreviewResult<AgentConfig>) => {
+      setImportPreviewDialog({
+        isOpen: true,
+        previewData,
+      });
+    },
+    []
+  );
+
+  // Close import preview dialog
+  const handleCloseImportPreview = useCallback(() => {
+    setImportPreviewDialog({
+      isOpen: false,
+      previewData: null,
+    });
+  }, []);
+
+  // Save imported agents
+  const handleSaveImportedAgents = useCallback(
+    (selectedIds: string[], strategy: ConflictStrategy) => {
+      if (!importPreviewDialog.previewData) return;
+
+      const selectedAgents = importPreviewDialog.previewData.items
+        .filter(item => selectedIds.includes(item.data.id))
+        .map(item => item.data);
+
+      const importData = {
+        agents: selectedAgents,
+        strategy,
+      };
+
+      sendToJava(`save_imported_agents:${JSON.stringify(importData)}`);
+      setImportPreviewDialog({ isOpen: false, previewData: null });
+    },
+    [importPreviewDialog.previewData]
+  );
+
+  // Handle import result (used by window callback)
+  const handleAgentImportResult = useCallback(
+    (result: { success: boolean; imported: number; updated: number; skipped: number; error?: string }) => {
+      if (result.success) {
+        const message = t('settings.agent.importDialog.importPartialSuccess', {
+          imported: result.imported,
+          updated: result.updated,
+          skipped: result.skipped,
+        });
+        onSuccess?.(message);
+      }
+      // Reload agents list
+      loadAgents();
+    },
+    [onSuccess, t, loadAgents]
   );
 
   return {
@@ -179,6 +282,8 @@ export function useAgentManagement(options: UseAgentManagementOptions = {}) {
     agentsLoading,
     agentDialog,
     deleteAgentConfirm,
+    importPreviewDialog,
+    exportDialog,
 
     // Methods
     loadAgents,
@@ -192,6 +297,14 @@ export function useAgentManagement(options: UseAgentManagementOptions = {}) {
     confirmDeleteAgent,
     cancelDeleteAgent,
     handleAgentOperationResult,
+    handleExportAgents,
+    handleCloseExportDialog,
+    handleConfirmExport,
+    handleImportAgentsFile,
+    handleAgentImportPreviewResult,
+    handleCloseImportPreview,
+    handleSaveImportedAgents,
+    handleAgentImportResult,
 
     // Setter
     setAgentsLoading,

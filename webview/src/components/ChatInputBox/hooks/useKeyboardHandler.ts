@@ -11,7 +11,7 @@ interface InlineCompletionHandler {
 }
 
 export interface UseKeyboardHandlerOptions {
-  isComposing: boolean;
+  isComposingRef: MutableRefObject<boolean>;
   lastCompositionEndTimeRef: MutableRefObject<number>;
   sendShortcut: 'enter' | 'cmdEnter';
   sdkStatusLoading: boolean;
@@ -20,6 +20,7 @@ export interface UseKeyboardHandlerOptions {
   commandCompletion: CompletionWithKeyDown;
   agentCompletion: CompletionWithKeyDown;
   promptCompletion: CompletionWithKeyDown;
+  dollarCommandCompletion: CompletionWithKeyDown;
   handleMacCursorMovement: (e: ReactKeyboardEvent<HTMLDivElement>) => boolean;
   handleHistoryKeyDown: (e: {
     key: string;
@@ -47,7 +48,7 @@ export interface UseKeyboardHandlerOptions {
  * - Preventing IME "confirm enter" false send
  */
 export function useKeyboardHandler({
-  isComposing,
+  isComposingRef,
   lastCompositionEndTimeRef,
   sendShortcut,
   sdkStatusLoading,
@@ -56,6 +57,7 @@ export function useKeyboardHandler({
   commandCompletion,
   agentCompletion,
   promptCompletion,
+  dollarCommandCompletion,
   handleMacCursorMovement,
   handleHistoryKeyDown,
   inlineCompletion,
@@ -65,7 +67,7 @@ export function useKeyboardHandler({
 }: UseKeyboardHandlerOptions) {
   const onKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLDivElement>) => {
-      const isIMEComposing = isComposing || e.nativeEvent.isComposing;
+      const isIMEComposing = isComposingRef.current || e.nativeEvent.isComposing;
 
       const isEnterKey =
         e.key === 'Enter' || e.nativeEvent.keyCode === 13;
@@ -119,6 +121,16 @@ export function useKeyboardHandler({
         }
       }
 
+      if (dollarCommandCompletion.isOpen) {
+        const handled = dollarCommandCompletion.handleKeyDown(e.nativeEvent);
+        if (handled) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.key === 'Enter') completionSelectedRef.current = true;
+          return;
+        }
+      }
+
       // Handle inline history completion (Tab key)
       if (e.key === 'Tab' && inlineCompletion) {
         const applied = inlineCompletion.applySuggestion();
@@ -146,12 +158,13 @@ export function useKeyboardHandler({
       handleSubmit();
     },
     [
-      isComposing,
+      isComposingRef,
       handleMacCursorMovement,
       fileCompletion,
       commandCompletion,
       agentCompletion,
       promptCompletion,
+      dollarCommandCompletion,
       handleHistoryKeyDown,
       inlineCompletion,
       lastCompositionEndTimeRef,

@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -8,19 +9,14 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
-  Attachment,
   ChatInputBoxHandle,
   ChatInputBoxProps,
-  CommandItem,
-  FileItem,
   PermissionMode,
 } from './types.js';
 import { ChatInputBoxHeader } from './ChatInputBoxHeader.js';
 import { ChatInputBoxFooter } from './ChatInputBoxFooter.js';
 import { ResizeHandles } from './ResizeHandles.js';
 import {
-  useCompletionDropdown,
-  useCompletionTriggerDetection,
   useTextContent,
   useFileTags,
   useTooltip,
@@ -34,29 +30,18 @@ import {
   useKeyboardHandler,
   useNativeEventCapture,
   useControlledValueSync,
-  useAttachmentHandlers,
-  useChatInputImperativeHandle,
+  useChatInputAttachmentsCoordinator,
+  useChatInputCompletionsCoordinator,
+  useChatInputSelectionController,
+  useOpenSourceBannerState,
   useSpaceKeyListener,
   useResizableChatInputBox,
-  useInlineHistoryCompletion,
 } from './hooks/index.js';
-import {
-  commandToDropdownItem,
-  fileReferenceProvider,
-  fileToDropdownItem,
-  slashCommandProvider,
-  agentProvider,
-  agentToDropdownItem,
-  promptProvider,
-  promptToDropdownItem,
-  preloadSlashCommands,
-  type AgentItem,
-  type PromptItem,
-} from './providers/index.js';
 import { debounce } from './utils/debounce.js';
-import { setCursorOffset } from './utils/selectionUtils.js';
 import { perfTimer } from '../../utils/debug.js';
 import { DEBOUNCE_TIMING } from '../../constants/performance.js';
+import { ContextMenu } from '../ContextMenu';
+import { useContextMenu, copySelection, pasteAtCursor, insertNewline } from '../../hooks/useContextMenu.js';
 import './styles.css';
 
 /**
@@ -68,7 +53,7 @@ import './styles.css';
  * - Debounced onInput callback to reduce parent component updates
  * - Cached getTextContent to avoid repeated DOM traversal
  */
-export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
+export const ChatInputBox = memo(forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
   (
     {
       isLoading = false,
@@ -91,7 +76,7 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
       onModeSelect,
       onModelSelect,
       onProviderSelect,
-      reasoningEffort = 'medium',
+      reasoningEffort = 'high',
       onReasoningChange,
       activeFile,
       selectedLines,
@@ -105,6 +90,7 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
       onAgentSelect,
       onOpenAgentSettings,
       onOpenPromptSettings,
+      onOpenModelSettings,
       hasMessages = false,
       onRewind,
       statusPanelExpanded = true,
@@ -115,24 +101,27 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
       addToast,
       messageQueue,
       onRemoveFromQueue,
+      autoOpenFileEnabled,
+      onAutoOpenFileEnabledChange,
+      longContextEnabled = true,
+      onLongContextChange,
     }: ChatInputBoxProps,
     ref: React.ForwardedRef<ChatInputBoxHandle>
   ) => {
     const { t } = useTranslation();
 
-    // Open source banner state (show once, dismiss permanently)
-    const BANNER_DISMISSED_KEY = 'openSourceBannerDismissed';
-    const [showOpenSourceBanner, setShowOpenSourceBanner] = useState(
-      () => !localStorage.getItem(BANNER_DISMISSED_KEY)
-    );
-    const handleDismissOpenSourceBanner = useCallback(() => {
-      localStorage.setItem(BANNER_DISMISSED_KEY, 'true');
-      setShowOpenSourceBanner(false);
-    }, []);
-
-    // Internal attachments state (if not provided externally)
-    const [internalAttachments, setInternalAttachments] = useState<Attachment[]>([]);
-    const attachments = externalAttachments ?? internalAttachments;
+    const { showOpenSourceBanner, handleDismissOpenSourceBanner } = useOpenSourceBannerState();
+    const {
+      attachments,
+      setInternalAttachments,
+      clearAttachmentsDraft,
+      handleAddAttachment,
+      handleRemoveAttachment,
+    } = useChatInputAttachmentsCoordinator({
+      externalAttachments,
+      onAddAttachment,
+      onRemoveAttachment,
+    });
 
     // Input element refs and state
     const containerRef = useRef<HTMLDivElement>(null);
@@ -140,6 +129,8 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
     const editableWrapperRef = useRef<HTMLDivElement>(null);
     const submittedOnEnterRef = useRef(false);
     const completionSelectedRef = useRef(false);
+    const closeAllCompletionsRef = useRef<() => void>(() => {});
+    const handleInputRef = useRef<() => void>(() => {});
     const [hasContent, setHasContent] = useState(false);
 
     // Flag to track if we're updating from external value
@@ -154,10 +145,7 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
 
     // Close all completions helper
     const closeAllCompletions = useCallback(() => {
-      fileCompletion.close();
-      commandCompletion.close();
-      agentCompletion.close();
-      promptCompletion.close();
+      closeAllCompletionsRef.current();
     }, []);
 
     // File tags hook
@@ -167,175 +155,11 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
       onCloseCompletions: closeAllCompletions,
     });
 
-    // File reference completion hook
-    const fileCompletion = useCompletionDropdown<FileItem>({
-      trigger: '@',
-      provider: fileReferenceProvider,
-      toDropdownItem: fileToDropdownItem,
-      onSelect: (file, query) => {
-        if (!editableRef.current || !query) return;
-
-        const text = getTextContent();
-        // Prefer absolute path, fallback to relative path
-        const path = file.absolutePath || file.path;
-        // Directories don't add space (to continue path input), files add space
-        const replacement = file.type === 'directory' ? `@${path}` : `@${path} `;
-        const newText = fileCompletion.replaceText(text, replacement, query);
-
-        // Record path mapping: filename -> full path, for tooltip display
-        if (file.absolutePath) {
-          // Record multiple possible keys: filename, relative path, absolute path
-          pathMappingRef.current.set(file.name, file.absolutePath);
-          pathMappingRef.current.set(file.path, file.absolutePath);
-          pathMappingRef.current.set(file.absolutePath, file.absolutePath);
-        }
-
-        // Update input box content
-        editableRef.current.innerText = newText;
-
-        // Set cursor to correct position after the replacement text
-        const cursorPos = query.start + replacement.length;
-        setCursorOffset(editableRef.current, cursorPos);
-
-        handleInput();
-
-        // Tell renderFileTags to place cursor after this file tag
-        setCursorAfterPath(path);
-
-        // Immediately try to render file tags (no need for user to manually input space)
-        // Use setTimeout to ensure DOM update and cursor position are ready
-        setTimeout(() => {
-          renderFileTags();
-        }, 0);
-      },
-    });
-
-    // Slash command completion hook
-    const commandCompletion = useCompletionDropdown<CommandItem>({
-      trigger: '/',
-      provider: slashCommandProvider,
-      toDropdownItem: commandToDropdownItem,
-      onSelect: (command, query) => {
-        if (!editableRef.current || !query) return;
-
-        const text = getTextContent();
-        const replacement = `${command.label} `;
-        const newText = commandCompletion.replaceText(text, replacement, query);
-
-        // Update input box content
-        editableRef.current.innerText = newText;
-
-        // Set cursor to correct position after the replacement text
-        const cursorPos = query.start + replacement.length;
-        setCursorOffset(editableRef.current, cursorPos);
-
-        handleInput();
-      },
-    });
-
-    // Agent selection completion hook (# trigger at line start)
-    const agentCompletion = useCompletionDropdown<AgentItem>({
-      trigger: '#',
-      provider: agentProvider,
-      toDropdownItem: agentToDropdownItem,
-      onSelect: (agent, query) => {
-        // Skip loading and empty state special items
-        if (
-          agent.id === '__loading__' ||
-          agent.id === '__empty__' ||
-          agent.id === '__empty_state__'
-        )
-          return;
-
-        // Handle create agent
-        if (agent.id === '__create_new__') {
-          onOpenAgentSettings?.();
-          // Clear # trigger text from input box
-          if (editableRef.current && query) {
-            const text = getTextContent();
-            const newText = agentCompletion.replaceText(text, '', query);
-            editableRef.current.innerText = newText;
-
-            // Set cursor to the position where trigger was removed
-            setCursorOffset(editableRef.current, query.start);
-
-            handleInput();
-          }
-          return;
-        }
-
-        // Select agent: don't insert text, call onAgentSelect callback
-        onAgentSelect?.({ id: agent.id, name: agent.name, prompt: agent.prompt });
-
-        // Clear # trigger text from input box
-        if (editableRef.current && query) {
-          const text = getTextContent();
-          const newText = agentCompletion.replaceText(text, '', query);
-          editableRef.current.innerText = newText;
-
-          // Set cursor to the position where trigger was removed
-          setCursorOffset(editableRef.current, query.start);
-
-          handleInput();
-        }
-      },
-    });
-
-    // Prompt completion hook (! trigger)
-    const promptCompletion = useCompletionDropdown<PromptItem>({
-      trigger: '!',
-      provider: promptProvider,
-      toDropdownItem: promptToDropdownItem,
-      onSelect: (prompt, query) => {
-        // Skip loading and empty state special items
-        if (
-          prompt.id === '__loading__' ||
-          prompt.id === '__empty__' ||
-          prompt.id === '__empty_state__'
-        )
-          return;
-
-        // Handle create prompt
-        if (prompt.id === '__create_new__') {
-          onOpenPromptSettings?.();
-          // Clear ! trigger text from input box
-          if (editableRef.current && query) {
-            const text = getTextContent();
-            const newText = promptCompletion.replaceText(text, '', query);
-            editableRef.current.innerText = newText;
-
-            // Set cursor to the position where trigger was removed
-            setCursorOffset(editableRef.current, query.start);
-
-            handleInput();
-          }
-          return;
-        }
-
-        // Insert prompt content at cursor position
-        if (editableRef.current && query) {
-          const text = getTextContent();
-          // Replace trigger and query with the prompt content
-          const newText = promptCompletion.replaceText(text, prompt.content, query);
-          editableRef.current.innerText = newText;
-
-          // Set cursor to end of inserted prompt content
-          const cursorPos = query.start + prompt.content.length;
-          setCursorOffset(editableRef.current, cursorPos);
-
-          handleInput();
-        }
-      },
-    });
-
-    // Inline history completion hook (simple tab-complete style)
-    const inlineCompletion = useInlineHistoryCompletion({
-      debounceMs: 100,
-      minQueryLength: 2,
-    });
-
     // Tooltip hook
     const { tooltip, handleMouseOver, handleMouseLeave } = useTooltip();
+
+    // Context menu hook
+    const ctxMenu = useContextMenu();
 
     /**
      * Clear input box
@@ -372,26 +196,46 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
       [renderFileTags]
     );
 
-    // Completion trigger detection hook
-    const { debouncedDetectCompletion } = useCompletionTriggerDetection({
-      editableRef,
-      sharedComposingRef,
-      justRenderedTagRef,
-      getTextContent,
+    const {
       fileCompletion,
       commandCompletion,
       agentCompletion,
       promptCompletion,
+      dollarCommandCompletion,
+      inlineCompletion,
+      debouncedDetectCompletion,
+      syncInlineCompletion,
+      setRenderFileTags,
+    } = useChatInputCompletionsCoordinator({
+      editableRef,
+      sharedComposingRef,
+      justRenderedTagRef,
+      getTextContent,
+      pathMappingRef,
+      setCursorAfterPath,
+      closeAllCompletionsRef,
+      handleInputRef,
+      currentProvider,
+      onAgentSelect,
+      onOpenAgentSettings,
+      onOpenPromptSettings,
     });
 
     // Performance optimization: Debounced onInput callback
     // Reduces parent component re-renders during rapid typing
+    // Also skips during IME composition to prevent parent re-renders that cause JCEF stutter
     const debouncedOnInput = useMemo(
       () =>
         debounce((text: string) => {
           // Skip if this is an external value update to avoid loops
           if (isExternalUpdateRef.current) {
             isExternalUpdateRef.current = false;
+            return;
+          }
+          // Skip during active IME composition to prevent parent re-renders
+          // that can disrupt Korean/CJK input in JCEF environments.
+          // The update will be triggered after compositionEnd via handleInput.
+          if (sharedComposingRef.current) {
             return;
           }
           onInput?.(text);
@@ -401,24 +245,26 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
 
     /**
      * Handle input event (optimized: use debounce to reduce performance overhead)
-     * @param isComposingFromEvent - isComposing state from native event (higher priority)
      */
     const handleInput = useCallback(
-      (isComposingFromEvent?: boolean) => {
+      () => {
         const timer = perfTimer('handleInput');
 
-        // Use multiple checks to correctly detect IME state:
-        // 1. Native event isComposing (most accurate, can detect before compositionStart)
-        // 2. isComposingRef (sync ref, faster than React state)
-        // 3. React state isComposing (as fallback)
-        const isCurrentlyComposing =
-          isComposingFromEvent ?? isComposingRef.current ?? isComposing;
-
-        // Key fix: During IME composition, completely skip all DOM operations and state updates
-        // Avoid interrupting IME normal operation, wait for compositionend to handle uniformly
-        if (isCurrentlyComposing) {
+        // Only trust our own isComposingRef for IME state detection.
+        // JCEF's InputEvent.isComposing is unreliable (can be false during active
+        // composition, or true after compositionEnd). Our ref is set synchronously
+        // by compositionStart/End and keyCode 229 detection, making it the sole
+        // reliable source of truth.
+        if (isComposingRef.current) {
           return;
         }
+
+        // Cancel any pending compositionEnd fallback timeout.
+        // The normal input event path handles state sync, so the fallback
+        // (which would redundantly call handleInput again) is no longer needed.
+        // This prevents: 1) double handleInput calls, 2) debouncedOnInput timer
+        // reset that delays parent notification by an extra 100ms.
+        cancelPendingFallback();
 
         // Invalidate cache since content changed
         invalidateCache();
@@ -445,15 +291,7 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
         setHasContent(!isEmpty);
 
         // Update inline history completion
-        // Only if no other completion menu is open
-        // Note: Access isOpen directly from the completion objects at call time
-        // to avoid unnecessary re-renders when isOpen changes
-        const isOtherCompletionOpen = fileCompletion.isOpen || commandCompletion.isOpen || agentCompletion.isOpen || promptCompletion.isOpen;
-        if (!isOtherCompletionOpen) {
-          inlineCompletion.updateQuery(text);
-        } else {
-          inlineCompletion.clear();
-        }
+        syncInlineCompletion(text);
 
         // Notify parent component (use debounced version to reduce re-renders)
         // If determined empty (only zero-width characters), pass empty string to parent
@@ -461,62 +299,46 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
 
         timer.end();
       },
-      // Note: fileCompletion/commandCompletion/agentCompletion/promptCompletion objects are stable references
-      // We access .isOpen at call time, so we don't need .isOpen in deps
       [
         getTextContent,
         adjustHeight,
         debouncedDetectCompletion,
         debouncedOnInput,
         invalidateCache,
-        fileCompletion,
-        commandCompletion,
-        agentCompletion,
-        promptCompletion,
-        inlineCompletion,
+        syncInlineCompletion,
       ]
     );
 
-    /**
-     * Apply inline history completion (Tab key)
-     */
-    const applyInlineCompletion = useCallback(() => {
-      const fullText = inlineCompletion.applySuggestion();
-      if (!fullText || !editableRef.current) return false;
+    useEffect(() => {
+      handleInputRef.current = handleInput;
+    }, [handleInput]);
 
-      // Fill the input with the complete text
-      editableRef.current.innerText = fullText;
-
-      // Set cursor to end
-      const range = document.createRange();
-      const selection = window.getSelection();
-      range.selectNodeContents(editableRef.current);
-      range.collapse(false);
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-
-      // Update state
-      handleInput();
-      return true;
-    }, [inlineCompletion, handleInput]);
-
-    // IME composition hook
+    // IME composition hook (ref-only, no React state to avoid re-renders during composition)
     const {
-      isComposing,
       isComposingRef,
       lastCompositionEndTimeRef,
-      handleCompositionStart,
-      handleCompositionEnd,
+      handleCompositionStart: rawHandleCompositionStart,
+      handleCompositionEnd: rawHandleCompositionEnd,
+      cancelPendingFallback,
     } = useIMEComposition({
       handleInput,
-      renderFileTags,
     });
 
-    // Sync sharedComposingRef with isComposingRef for reliable composing state access
-    // This ensures detectAndTriggerCompletion always has the latest composing state
+    // Wrap composition handlers to sync sharedComposingRef (used by completion detection)
+    // Both refs are now set synchronously — no RAF, no race conditions.
+    const handleCompositionStart = useCallback(() => {
+      rawHandleCompositionStart();
+      sharedComposingRef.current = true;
+    }, [rawHandleCompositionStart]);
+
+    const handleCompositionEnd = useCallback(() => {
+      rawHandleCompositionEnd();
+      sharedComposingRef.current = false;
+    }, [rawHandleCompositionEnd]);
+
     useEffect(() => {
-      sharedComposingRef.current = isComposing;
-    }, [isComposing]);
+      setRenderFileTags(renderFileTags);
+    }, [renderFileTags, setRenderFileTags]);
 
     const { record: recordInputHistory, handleKeyDown: handleHistoryKeyDown } = useInputHistory({
       editableRef,
@@ -553,13 +375,17 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
       sdkInstalled,
       currentProvider,
       clearInput,
-      cancelPendingInput: debouncedOnInput.cancel,
+      cancelPendingInput: () => {
+        debouncedOnInput.cancel();
+      },
       externalAttachments,
       setInternalAttachments,
+      clearAttachmentsDraft,
       fileCompletion,
       commandCompletion,
       agentCompletion,
       promptCompletion,
+      dollarCommandCompletion,
       recordInputHistory,
       onSubmit,
       onInstallSdk,
@@ -580,13 +406,36 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
     } = usePromptEnhancer({
       editableRef,
       getTextContent,
-      selectedModel,
       setHasContent,
       onInput,
     });
 
+    const {
+      focusInput,
+      applyInlineCompletion,
+      handleCtxMenuCut,
+      handleClearFileContext,
+      handleRequestEnableFileContext,
+    } = useChatInputSelectionController({
+      ref,
+      editableRef,
+      getTextContent,
+      invalidateCache,
+      isExternalUpdateRef,
+      setHasContent,
+      adjustHeight,
+      clearInput,
+      hasContent,
+      extractFileTags,
+      inlineCompletion,
+      handleInput,
+      ctxMenu,
+      onClearContext,
+      onAutoOpenFileEnabledChange,
+    });
+
     const { onKeyDown: handleKeyDown, onKeyUp: handleKeyUp } = useKeyboardHandler({
-      isComposing,
+      isComposingRef,
       lastCompositionEndTimeRef,
       sendShortcut,
       sdkStatusLoading,
@@ -595,6 +444,7 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
       commandCompletion,
       agentCompletion,
       promptCompletion,
+      dollarCommandCompletion,
       handleMacCursorMovement,
       handleHistoryKeyDown,
       // Inline completion: Tab key applies suggestion
@@ -619,7 +469,6 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
 
     useNativeEventCapture({
       editableRef,
-      isComposing,
       isComposingRef,
       lastCompositionEndTimeRef,
       sendShortcut,
@@ -627,11 +476,23 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
       commandCompletion,
       agentCompletion,
       promptCompletion,
+      dollarCommandCompletion,
       completionSelectedRef,
       submittedOnEnterRef,
       handleSubmit,
       handleEnhancePrompt,
     });
+
+    // Listen for IDEA shortcut send event (dispatched by window.execContextAction)
+    useEffect(() => {
+      const handler = () => {
+        if (!isLoading && !isComposingRef.current) {
+          handleSubmit();
+        }
+      };
+      document.addEventListener('ideaSend', handler);
+      return () => document.removeEventListener('ideaSend', handler);
+    }, [handleSubmit, isLoading]);
 
     // Paste and drop hook
     const { handlePaste, handleDragOver, handleDrop } = usePasteAndDrop({
@@ -643,17 +504,11 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
       setHasContent,
       setInternalAttachments,
       onInput,
-      fileCompletion,
-      commandCompletion,
+      closeAllCompletions,
       handleInput,
-      flushInput: debouncedOnInput.flush,
-    });
-
-    const { handleAddAttachment, handleRemoveAttachment } = useAttachmentHandlers({
-      externalAttachments,
-      onAddAttachment,
-      onRemoveAttachment,
-      setInternalAttachments,
+      flushInput: () => {
+        debouncedOnInput.flush();
+      },
     });
 
     /**
@@ -676,27 +531,6 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
       [onModelSelect]
     );
 
-    /**
-     * Focus input box
-     */
-    const focusInput = useCallback(() => {
-      editableRef.current?.focus();
-    }, []);
-
-    useChatInputImperativeHandle({
-      ref,
-      editableRef,
-      getTextContent,
-      invalidateCache,
-      isExternalUpdateRef,
-      setHasContent,
-      adjustHeight,
-      focusInput,
-      clearInput,
-      hasContent,
-      extractFileTags,
-    });
-
     // Global callbacks hook
     useGlobalCallbacks({
       editableRef,
@@ -706,16 +540,9 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
       renderFileTags,
       setHasContent,
       onInput,
-      fileCompletion,
-      commandCompletion,
+      closeAllCompletions,
       focusInput,
     });
-
-    // Preload slash commands on mount to improve perceived performance
-    // Load command data before user types "/" so it's immediately available
-    useEffect(() => {
-      preloadSlashCommands();
-    }, []);
 
     useSpaceKeyListener({ editableRef, onKeyDown: handleKeyDownForTagRendering });
 
@@ -736,6 +563,8 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
         onClick={focusInput}
         ref={containerRef}
         style={containerStyle}
+        onMouseOver={handleMouseOver}
+        onMouseLeave={handleMouseLeave}
       >
         <ResizeHandles getHandleProps={getHandleProps} nudge={nudge} />
 
@@ -753,7 +582,7 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
           usageUsedTokens={usageUsedTokens}
           usageMaxTokens={usageMaxTokens}
           showUsage={showUsage}
-          onClearContext={onClearContext}
+          onClearContext={handleClearFileContext}
           onAddAttachment={handleAddAttachment}
           selectedAgent={selectedAgent}
           onClearAgent={() => onAgentSelect?.(null)}
@@ -765,26 +594,28 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
           onRemoveFromQueue={onRemoveFromQueue}
           showOpenSourceBanner={showOpenSourceBanner}
           onDismissOpenSourceBanner={handleDismissOpenSourceBanner}
+          autoOpenFileEnabled={autoOpenFileEnabled}
+          onRequestEnableFileContext={handleRequestEnableFileContext}
         />
 
         {/* Input area */}
         <div
           ref={editableWrapperRef}
           className="input-editable-wrapper"
-          onMouseOver={handleMouseOver}
-          onMouseLeave={handleMouseLeave}
           style={editableWrapperStyle}
         >
           <div
             ref={editableRef}
             className="input-editable"
             contentEditable={!disabled}
+            spellCheck={false}
             data-placeholder={placeholder}
             data-completion-suffix={inlineCompletion.suffix || ''}
-            onInput={(e) => {
-              // Pass native event isComposing state, more accurate than React state
-              // Can correctly capture input before compositionStart
-              handleInput((e.nativeEvent as InputEvent).isComposing);
+            onInput={() => {
+              // Don't pass browser's isComposing — it's unreliable in JCEF.
+              // isComposingRef (set by compositionStart/End + keyCode 229) is the
+              // sole source of truth for IME state.
+              handleInput();
             }}
             onKeyDown={handleKeyDown}
             onKeyUp={handleKeyUp}
@@ -805,12 +636,13 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
                   fileCompletion.isOpen ||
                   commandCompletion.isOpen ||
                   agentCompletion.isOpen ||
-                  promptCompletion.isOpen
+                  promptCompletion.isOpen ||
+                  dollarCommandCompletion.isOpen
                 ) {
                   return;
                 }
                 // Only allow submit when not loading and not in IME composition
-                if (!isLoading && !isComposing) {
+                if (!isLoading && !isComposingRef.current) {
                   handleSubmit();
                 }
               }
@@ -822,8 +654,23 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
             onPaste={handlePaste}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
+            onContextMenu={ctxMenu.open}
             suppressContentEditableWarning
           />
+          {ctxMenu.visible && (
+            <ContextMenu
+              x={ctxMenu.x}
+              y={ctxMenu.y}
+              onClose={ctxMenu.close}
+              items={[
+                { label: t('contextMenu.copy', 'Copy'), action: () => copySelection(ctxMenu.savedRange, ctxMenu.selectedText), disabled: !ctxMenu.hasSelection },
+                { label: t('contextMenu.cut', 'Cut'), action: handleCtxMenuCut, disabled: !ctxMenu.hasSelection },
+                { label: t('contextMenu.paste', 'Paste'), action: () => { if (editableRef.current) { pasteAtCursor(ctxMenu.savedRange, editableRef.current, handleInput); } } },
+                { separator: true },
+                { label: t('contextMenu.newline', 'Insert Newline'), action: () => { if (editableRef.current) { insertNewline(ctxMenu.savedRange, editableRef.current); handleInput(); } } },
+              ]}
+            />
+          )}
         </div>
 
         <ChatInputBoxFooter
@@ -849,11 +696,15 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
           selectedAgent={selectedAgent}
           onAgentSelect={(agent) => onAgentSelect?.(agent)}
           onOpenAgentSettings={onOpenAgentSettings}
+          onAddModel={onOpenModelSettings}
           onClearAgent={() => onAgentSelect?.(null)}
+          longContextEnabled={longContextEnabled}
+          onLongContextChange={onLongContextChange}
           fileCompletion={fileCompletion}
           commandCompletion={commandCompletion}
           agentCompletion={agentCompletion}
           promptCompletion={promptCompletion}
+          dollarCommandCompletion={dollarCommandCompletion}
           tooltip={tooltip}
           promptEnhancer={{
             isOpen: showEnhancerDialog,
@@ -869,7 +720,7 @@ export const ChatInputBox = forwardRef<ChatInputBoxHandle, ChatInputBoxProps>(
       </div>
     );
   }
-);
+));
 
 // Display name for React DevTools
 ChatInputBox.displayName = 'ChatInputBox';

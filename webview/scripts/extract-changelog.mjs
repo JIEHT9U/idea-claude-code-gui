@@ -20,9 +20,9 @@ const content = fs.readFileSync(changelogPath, 'utf8');
 /**
  * Parse CHANGELOG.md into structured entries.
  * Handles three format eras:
- * - Newer (v0.1.7+): Bilingual with English:/中文: markers and emoji section headers
- * - Mid (v0.1.4-v0.1.6): Bilingual with English:/中文: markers and checkbox items
- * - Older (< v0.1.4): Chinese only with checkbox items or plain text
+ * - Newer (v0.1.7+): Bilingual with English and Chinese markers plus emoji section headers
+ * - Mid (v0.1.4-v0.1.6): Bilingual with English and Chinese markers plus checkbox items
+ * - Older (< v0.1.4): Chinese-only entries with checkbox items or plain text
  */
 function parseChangelog(raw) {
   const entries = [];
@@ -45,8 +45,8 @@ function parseChangelog(raw) {
     const nextIndex = i + 1 < headers.length ? headers[i + 1].index : raw.length;
     const sectionContent = raw.substring(header.endIndex, nextIndex).trim();
 
-    // Extract version from header like "2026年2月19日（v0.1.9）" or "12月25日（v0.1.2-beta5）"
-    const versionMatch = header.fullMatch.match(/[（(]v?(\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?)[）)]/);
+    // Extract the version from headers that use localized date formats with the version in parentheses
+    const versionMatch = header.fullMatch.match(/[（(]v?(\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9.]+)?)[）)]/);
     if (!versionMatch) continue;
 
     const version = versionMatch[1];
@@ -77,8 +77,8 @@ function parseChangelog(raw) {
  * Split section content into English and Chinese parts.
  */
 function splitBilingual(text) {
-  // Try to find English/中文 markers
-  // Patterns: "English:" / "中文：" or "中文:"
+  // Try to find the English and Chinese section markers
+  // Patterns: "English:" and the localized Chinese marker with either colon form
   const enMarkerRegex = /^English\s*[:：]/im;
   const zhMarkerRegex = /^中文\s*[:：]/im;
 
@@ -182,5 +182,11 @@ ${entriesCode},
 `;
 
 const outputPath = path.join(versionDir, 'changelog.ts');
-fs.writeFileSync(outputPath, tsContent);
-console.log(`Changelog file created at: ${outputPath}`);
+
+// Only write if content actually changed to avoid unnecessary git diffs
+if (fs.existsSync(outputPath) && fs.readFileSync(outputPath, 'utf8') === tsContent) {
+  console.log(`Changelog file unchanged, skipping write: ${outputPath}`);
+} else {
+  fs.writeFileSync(outputPath, tsContent);
+  console.log(`Changelog file updated: ${outputPath}`);
+}

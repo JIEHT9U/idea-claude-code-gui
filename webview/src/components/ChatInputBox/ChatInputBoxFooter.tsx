@@ -39,11 +39,15 @@ export function ChatInputBoxFooter({
   selectedAgent,
   onAgentSelect,
   onOpenAgentSettings,
+  onAddModel,
   onClearAgent,
+  longContextEnabled = true,
+  onLongContextChange,
   fileCompletion,
   commandCompletion,
   agentCompletion,
   promptCompletion,
+  dollarCommandCompletion,
   tooltip,
   promptEnhancer,
   t,
@@ -70,11 +74,15 @@ export function ChatInputBoxFooter({
   selectedAgent?: SelectedAgent | null;
   onAgentSelect?: (agent: SelectedAgent) => void;
   onOpenAgentSettings?: () => void;
+  onAddModel?: () => void;
   onClearAgent: () => void;
+  longContextEnabled?: boolean;
+  onLongContextChange?: (enabled: boolean) => void;
   fileCompletion: CompletionController;
   commandCompletion: CompletionController;
   agentCompletion: CompletionController;
   promptCompletion: CompletionController;
+  dollarCommandCompletion?: CompletionController;
   tooltip: TooltipState | null;
   promptEnhancer: {
     isOpen: boolean;
@@ -113,7 +121,10 @@ export function ChatInputBoxFooter({
         selectedAgent={selectedAgent}
         onAgentSelect={(agent) => onAgentSelect?.(agent)}
         onOpenAgentSettings={onOpenAgentSettings}
+        onAddModel={onAddModel}
         onClearAgent={onClearAgent}
+        longContextEnabled={longContextEnabled}
+        onLongContextChange={onLongContextChange}
       />
 
       {/* @ file reference dropdown menu */}
@@ -171,22 +182,41 @@ export function ChatInputBoxFooter({
         onMouseEnter={promptCompletion.handleMouseEnter}
       />
 
+      {/* $ command dropdown menu */}
+      {dollarCommandCompletion && (
+        <CompletionDropdown
+          isVisible={dollarCommandCompletion.isOpen}
+          position={dollarCommandCompletion.position}
+          width={400}
+          items={dollarCommandCompletion.items}
+          selectedIndex={dollarCommandCompletion.activeIndex}
+          loading={dollarCommandCompletion.loading}
+          emptyText={t('chat.noMatchingCommands')}
+          onClose={dollarCommandCompletion.close}
+          onSelect={(_, index) => dollarCommandCompletion.selectIndex(index)}
+          onMouseEnter={dollarCommandCompletion.handleMouseEnter}
+        />
+      )}
+
       {/* Floating Tooltip (uses Portal or Fixed positioning to break overflow limit) */}
-      {tooltip && tooltip.visible && (
+      {tooltip && tooltip.visible && (() => {
+        const tooltipStyle: React.CSSProperties = {
+          top: `${tooltip.top}px`,
+          left: `${tooltip.left}px`,
+          width: tooltip.width ? `${tooltip.width}px` : undefined,
+          // @ts-expect-error CSS custom properties
+          '--tooltip-tx': tooltip.tx || '-50%',
+          '--arrow-left': tooltip.arrowLeft || '50%',
+        };
+        return (
         <div
           className={`tooltip-popup ${tooltip.isBar ? 'tooltip-bar' : ''}`}
-          style={{
-            top: `${tooltip.top}px`,
-            left: `${tooltip.left}px`,
-            width: tooltip.width ? `${tooltip.width}px` : undefined,
-            // @ts-expect-error CSS custom properties
-            '--tooltip-tx': tooltip.tx || '-50%',
-            '--arrow-left': tooltip.arrowLeft || '50%',
-          }}
+          style={tooltipStyle}
         >
           {tooltip.text}
         </div>
-      )}
+        );
+      })()}
 
       {/* Prompt enhancer dialog */}
       <PromptEnhancerDialog

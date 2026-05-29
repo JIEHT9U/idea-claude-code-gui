@@ -1,5 +1,6 @@
 package com.github.claudecodegui.settings;
 
+import com.github.claudecodegui.i18n.ClaudeCodeGuiBundle;
 import com.github.claudecodegui.model.DeleteResult;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -22,6 +23,7 @@ import java.util.function.Function;
 public class CodexProviderManager {
     private static final Logger LOG = Logger.getInstance(CodexProviderManager.class);
     private static final String BACKUP_FILE_NAME = "config.json.bak";
+    public static final String CODEX_CLI_LOGIN_PROVIDER_ID = "__codex_cli_login__";
 
     private final Gson gson;
     private final Function<Void, JsonObject> configReader;
@@ -49,6 +51,19 @@ public class CodexProviderManager {
         JsonObject config = configReader.apply(null);
         List<JsonObject> result = new ArrayList<>();
 
+        String currentId = null;
+        if (config.has("codex") && config.get("codex").isJsonObject()) {
+            JsonObject codex = config.getAsJsonObject("codex");
+            if (codex.has("current") && !codex.get("current").isJsonNull()) {
+                currentId = codex.get("current").getAsString();
+            }
+        }
+        boolean cliLoginAuthorized = isCodexCliLoginAuthorized(config);
+
+        // Add CLI Login virtual provider at the top
+        result.add(createCodexCliLoginProviderObject(
+                CODEX_CLI_LOGIN_PROVIDER_ID.equals(currentId) && cliLoginAuthorized));
+
         if (!config.has("codex")) {
             return result;
         }
@@ -59,20 +74,45 @@ public class CodexProviderManager {
         }
 
         JsonObject providers = codex.getAsJsonObject("providers");
-        String currentId = codex.has("current") ? codex.get("current").getAsString() : null;
 
-        for (String key : providers.keySet()) {
-            JsonObject provider = providers.getAsJsonObject(key);
-            // Ensure id field exists
-            if (!provider.has("id")) {
-                provider.addProperty("id", key);
+        // Get provider order from config, or use default order (by key)
+        List<String> orderedIds = ProviderOrderHelper.getProviderOrder(codex, providers.keySet());
+
+        // Add providers in order
+        for (String id : orderedIds) {
+            if (providers.has(id)) {
+                JsonObject provider = providers.getAsJsonObject(id).deepCopy();
+                // Ensure id field exists
+                if (!provider.has("id")) {
+                    provider.addProperty("id", id);
+                }
+                // Add isActive flag
+                provider.addProperty("isActive", id.equals(currentId));
+                result.add(provider);
             }
-            // Add isActive flag
-            provider.addProperty("isActive", key.equals(currentId));
-            result.add(provider);
         }
 
         return result;
+    }
+
+    /**
+     * Save provider order.
+     */
+    public void saveProviderOrder(List<String> orderedIds) throws IOException {
+        JsonObject config = configReader.apply(null);
+
+        if (!config.has("codex")) {
+            JsonObject codex = new JsonObject();
+            codex.add("providers", new JsonObject());
+            codex.addProperty("current", "");
+            config.add("codex", codex);
+        }
+
+        JsonObject codex = config.getAsJsonObject("codex");
+        ProviderOrderHelper.setProviderOrder(codex, orderedIds);
+
+        configWriter.accept(config);
+        LOG.info("[CodexProviderManager] Saved provider order: " + orderedIds);
     }
 
     /**
@@ -86,12 +126,24 @@ public class CodexProviderManager {
         }
 
         JsonObject codex = config.getAsJsonObject("codex");
-        if (!codex.has("current") || !codex.has("providers")) {
+        if (!codex.has("current")) {
             return null;
         }
 
         String currentId = codex.get("current").getAsString();
         if (currentId == null || currentId.isEmpty()) {
+            return null;
+        }
+
+        // Handle CLI Login virtual provider
+        if (CODEX_CLI_LOGIN_PROVIDER_ID.equals(currentId)) {
+            if (!isCodexCliLoginAuthorized(config)) {
+                return null;
+            }
+            return createCodexCliLoginProviderObject(true);
+        }
+
+        if (!codex.has("providers")) {
             return null;
         }
 
@@ -285,6 +337,9 @@ public class CodexProviderManager {
                 }
             }
 
+            // Remove deleted provider from providerOrder to avoid stale IDs
+            ProviderOrderHelper.removeFromOrder(codex, id);
+
             // Write config
             configWriter.accept(config);
             LOG.info("[CodexProviderManager] Deleted provider: " + id);
@@ -322,14 +377,27 @@ public class CodexProviderManager {
         JsonObject config = configReader.apply(null);
 
         if (!config.has("codex")) {
-            throw new IllegalArgumentException("No codex configuration found");
+            JsonObject codexSection = new JsonObject();
+            codexSection.add("providers", new JsonObject());
+            codexSection.addProperty("current", "");
+            config.add("codex", codexSection);
         }
 
         JsonObject codex = config.getAsJsonObject("codex");
-        JsonObject providers = codex.getAsJsonObject("providers");
 
-        if (!providers.has(id)) {
-            throw new IllegalArgumentException("Provider with id '" + id + "' not found");
+        if (id == null || id.trim().isEmpty()) {
+            codex.addProperty("current", "");
+            configWriter.accept(config);
+            LOG.info("[CodexProviderManager] Cleared active provider");
+            return;
+        }
+
+        // CLI Login is a virtual provider — no need to check providers map
+        if (!CODEX_CLI_LOGIN_PROVIDER_ID.equals(id)) {
+            JsonObject providers = codex.getAsJsonObject("providers");
+            if (providers == null || !providers.has(id)) {
+                throw new IllegalArgumentException("Provider with id '" + id + "' not found");
+            }
         }
 
         codex.addProperty("current", id);
@@ -372,5 +440,44 @@ public class CodexProviderManager {
      */
     public JsonObject getCurrentCodexConfig() throws IOException {
         return codexSettingsManager.getCurrentCodexConfig();
+    }
+
+    /**
+     * Create virtual CLI Login provider object.
+     * Unlike regular providers, this is not stored in config but generated dynamically.
+     */
+    private JsonObject createCodexCliLoginProviderObject(boolean isActive) {
+        JsonObject provider = new JsonObject();
+        provider.addProperty("id", CODEX_CLI_LOGIN_PROVIDER_ID);
+        provider.addProperty("name", ClaudeCodeGuiBundle.message("provider.codexCliLogin.name"));
+        provider.addProperty("isActive", isActive);
+        provider.addProperty("isCodexCliLoginProvider", true);
+        return provider;
+    }
+
+    /**
+     * Check if the current active provider is Codex CLI Login.
+     */
+    public boolean isCodexCliLoginProviderActive() {
+        try {
+            JsonObject config = configReader.apply(null);
+            if (!config.has("codex")) { return false; }
+            JsonObject codex = config.getAsJsonObject("codex");
+            if (!codex.has("current")) { return false; }
+            return CODEX_CLI_LOGIN_PROVIDER_ID.equals(codex.get("current").getAsString())
+                    && isCodexCliLoginAuthorized(config);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean isCodexCliLoginAuthorized(JsonObject config) {
+        if (config == null || !config.has("codex") || !config.get("codex").isJsonObject()) {
+            return false;
+        }
+        JsonObject codex = config.getAsJsonObject("codex");
+        return codex.has("localConfigAuthorized")
+                && !codex.get("localConfigAuthorized").isJsonNull()
+                && codex.get("localConfigAuthorized").getAsBoolean();
     }
 }

@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { createTextFragment } from '../utils/selectionUtils.js';
 
 interface UseGlobalCallbacksOptions {
   editableRef: React.RefObject<HTMLDivElement | null>;
@@ -8,8 +9,7 @@ interface UseGlobalCallbacksOptions {
   renderFileTags: () => void;
   setHasContent: (hasContent: boolean) => void;
   onInput?: (content: string) => void;
-  fileCompletion: { close: () => void };
-  commandCompletion: { close: () => void };
+  closeAllCompletions: () => void;
   focusInput: () => void;
 }
 
@@ -28,8 +28,7 @@ export function useGlobalCallbacks({
   renderFileTags,
   setHasContent,
   onInput,
-  fileCompletion,
-  commandCompletion,
+  closeAllCompletions,
   focusInput,
 }: UseGlobalCallbacksOptions): void {
   // Register global function to receive file path from Java
@@ -40,8 +39,10 @@ export function useGlobalCallbacks({
     const insertSingleFilePath = (filePath: string) => {
       if (!editableRef.current) return;
 
-      // Extract file path and add to path mapping
       const absolutePath = filePath.trim();
+      if (!absolutePath) return;
+
+      // Add path to path mapping
       const fileName = absolutePath.split(/[/\\]/).pop() || absolutePath;
 
       // Add path to pathMappingRef to make it a "valid reference"
@@ -84,53 +85,61 @@ export function useGlobalCallbacks({
     };
 
     window.handleFilePathFromJava = (filePathInput: string | string[]) => {
-      if (!editableRef.current) return;
+      try {
+        if (!editableRef.current) return;
 
-      // Normalize input to string array.
-      // Java side (v0.1.9+) passes a JS array directly via executeJavaScript,
-      // so Array.isArray branch is the primary path.
-      // The string branch is kept for backward compatibility with older Java
-      // versions that passed a single string. It can be removed once v0.1.8
-      // support is no longer needed.
-      let filePaths: string[];
-      if (Array.isArray(filePathInput)) {
-        filePaths = filePathInput;
-      } else if (typeof filePathInput === 'string') {
-        try {
-          const parsed: unknown = JSON.parse(filePathInput);
-          filePaths = Array.isArray(parsed) ? parsed : [filePathInput];
-        } catch {
-          filePaths = [filePathInput];
+        // Normalize input to string array.
+        // Java side (v0.1.9+) passes a JS array directly via executeJavaScript,
+        // so Array.isArray branch is the primary path.
+        // The string branch is kept for backward compatibility with older Java
+        // versions that passed a single string. It can be removed once v0.1.8
+        // support is no longer needed.
+        let filePaths: string[];
+        if (Array.isArray(filePathInput)) {
+          filePaths = filePathInput;
+        } else if (typeof filePathInput === 'string') {
+          try {
+            const parsed: unknown = JSON.parse(filePathInput);
+            filePaths = Array.isArray(parsed) ? parsed : [filePathInput];
+          } catch {
+            filePaths = [filePathInput];
+          }
+        } else {
+          return;
         }
-      } else {
-        return;
-      }
 
-      // Insert all file paths
-      for (const filePath of filePaths) {
-        if (filePath && filePath.trim()) {
-          insertSingleFilePath(filePath.trim());
+        // Insert all file paths
+        for (const filePath of filePaths) {
+          if (filePath && filePath.trim()) {
+            insertSingleFilePath(filePath.trim());
+          }
         }
+
+        // Close all completion menus
+        closeAllCompletions();
+
+        // Directly trigger state update, don't call handleInput (avoid re-detecting completion)
+        const newText = getTextContent();
+        setHasContent(!!newText.trim());
+        adjustHeight();
+        onInput?.(newText);
+
+        // Render file tags on next frame
+        requestAnimationFrame(() => {
+          renderFileTags();
+        });
+      } catch (error) {
+        console.error('[useGlobalCallbacks] handleFilePathFromJava failed:', error);
       }
-
-      // Close completion menus
-      fileCompletion.close();
-      commandCompletion.close();
-
-      // Directly trigger state update, don't call handleInput (avoid re-detecting completion)
-      const newText = getTextContent();
-      setHasContent(!!newText.trim());
-      adjustHeight();
-      onInput?.(newText);
-
-      // Immediately render file tags
-      setTimeout(() => {
-        renderFileTags();
-      }, 50);
     };
 
-    // Initial focus
-    focusInput();
+    // Initial focus — but only if no other input/editable element is focused (B-013)
+    const active = document.activeElement;
+    const isOtherInputFocused = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement ||
+      (active instanceof HTMLElement && active.isContentEditable && active !== editableRef.current);
+    if (!isOtherInputFocused) {
+      focusInput();
+    }
 
     // Cleanup function
     return () => {
@@ -144,62 +153,97 @@ export function useGlobalCallbacks({
     renderFileTags,
     setHasContent,
     onInput,
-    fileCompletion,
-    commandCompletion,
+    closeAllCompletions,
     focusInput,
   ]);
 
   // Register global method: insert code snippet at cursor position
   useEffect(() => {
-    window.insertCodeSnippetAtCursor = (selectionInfo: string) => {
-      if (!editableRef.current) return;
-
-      // Ensure input box has focus
-      editableRef.current.focus();
-
-      // Insert text at cursor position
-      const selection = window.getSelection();
-      if (
-        selection &&
-        selection.rangeCount > 0 &&
-        editableRef.current.contains(selection.anchorNode)
-      ) {
-        // Cursor inside input box, insert at cursor position
-        const range = selection.getRangeAt(0);
-        range.deleteContents();
-        const textNode = document.createTextNode(selectionInfo + ' ');
-        range.insertNode(textNode);
-
-        // Move cursor after inserted text
-        range.setStartAfter(textNode);
-        range.collapse(true);
-        selection.removeAllRanges();
-        selection.addRange(range);
-      } else {
-        // Cursor not inside input box, append to end
-        const textNode = document.createTextNode(selectionInfo + ' ');
-        editableRef.current.appendChild(textNode);
-
-        // Move cursor to end
-        const range = document.createRange();
-        range.setStartAfter(textNode);
-        range.collapse(true);
-        selection?.removeAllRanges();
-        selection?.addRange(range);
+    const moveCaretAfterNode = (lastChild: ChildNode | null) => {
+      if (!lastChild) {
+        return;
       }
 
-      // Trigger state update
-      const newText = getTextContent();
-      setHasContent(!!newText.trim());
-      adjustHeight();
-      onInput?.(newText);
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.setStartAfter(lastChild);
+      range.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    };
 
-      // Immediately render file tags
-      setTimeout(() => {
-        renderFileTags();
-        // Re-focus after rendering
-        editableRef.current?.focus();
-      }, 50);
+    const appendExternalSnippetToEnd = (selectionInfo: string) => {
+      if (!editableRef.current) return;
+
+      const existingText = getTextContent();
+      const hasExistingContent = !!existingText.trim();
+      const needsLeadingNewline = hasExistingContent && !/\n\s*$/.test(existingText);
+      const fragment = createTextFragment(
+        `${needsLeadingNewline ? '\n' : ''}${selectionInfo} `
+      );
+      const lastChild = fragment.lastChild;
+
+      editableRef.current.appendChild(fragment);
+      moveCaretAfterNode(lastChild);
+    };
+
+    const tryInsertExternalSnippetAtCaret = (selectionInfo: string): boolean => {
+      if (!editableRef.current) return false;
+
+      const selection = window.getSelection();
+      if (
+        !selection ||
+        selection.rangeCount === 0 ||
+        !editableRef.current.contains(selection.anchorNode)
+      ) {
+        return false;
+      }
+
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      const fragment = createTextFragment(`${selectionInfo} `);
+      const lastChild = fragment.lastChild;
+      range.insertNode(fragment);
+
+      if (lastChild) {
+        range.setStartAfter(lastChild);
+      }
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return true;
+    };
+
+    window.insertCodeSnippetAtCursor = (selectionInfo: string) => {
+      try {
+        if (!editableRef.current) return;
+
+        // Read caret BEFORE focus() to avoid focus side-effects on selection.
+        // If caret is inside the editable, insert at caret. Otherwise (e.g. window
+        // just regained focus from an external IDE action with no prior caret),
+        // fall back to appending at the end with a leading newline separator.
+        const insertedAtCaret = tryInsertExternalSnippetAtCaret(selectionInfo);
+
+        if (!insertedAtCaret) {
+          editableRef.current.focus();
+          appendExternalSnippetToEnd(selectionInfo);
+        }
+
+        // Trigger state update
+        const newText = getTextContent();
+        setHasContent(!!newText.trim());
+        adjustHeight();
+        onInput?.(newText);
+
+        // Render file tags on next frame
+        requestAnimationFrame(() => {
+          renderFileTags();
+          // Re-focus after rendering
+          editableRef.current?.focus();
+        });
+      } catch (error) {
+        console.error('[useGlobalCallbacks] insertCodeSnippetAtCursor failed:', error);
+      }
     };
 
     return () => {

@@ -1,6 +1,7 @@
 package com.github.claudecodegui.util;
 
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.diagnostic.Logger;
@@ -265,6 +266,31 @@ public class EditorFileUtils {
             if (onFailure != null) {
                 ApplicationManager.getApplication().invokeLater(onFailure, ModalityState.nonModal());
             }
+        }
+    }
+
+    /**
+     * Gets the currently selected editor file path.
+     * Shared utility to avoid duplication across handlers and lifecycle managers.
+     *
+     * @param project the IDEA project
+     * @return selected file path, or null if no active file
+     */
+    public static String getCurrentEditorFilePath(Project project) {
+        if (project == null || project.isDisposed()) {
+            return null;
+        }
+        try {
+            return ApplicationManager.getApplication().runReadAction((Computable<String>) () -> {
+                VirtualFile[] files = FileEditorManager.getInstance(project).getSelectedFiles();
+                if (files.length == 0 || files[0] == null) {
+                    return null;
+                }
+                return files[0].getPath();
+            });
+        } catch (Exception e) {
+            LOG.debug("Failed to resolve current editor file path", e);
+            return null;
         }
     }
 

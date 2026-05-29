@@ -2,16 +2,22 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ToolInput, ToolResultBlock } from '../../types';
 import { openFile, showDiff, refreshFile } from '../../utils/bridge';
-import { getFileName } from '../../utils/helpers';
 import { getFileIcon } from '../../utils/fileIcons';
+import { resolveToolTarget, getToolLineInfo } from '../../utils/toolPresentation';
+import { normalizeToolInput } from '../../utils/toolInputNormalization';
+import { useResolvedFileLinkTooltip } from '../../hooks/useResolvedFileLinkTooltip';
 
 interface EditItem {
   filePath: string;
+  openPath: string;
+  displayPath: string;
   fileName: string;
   oldString: string;
   newString: string;
   additions: number;
   deletions: number;
+  lineStart?: number;
+  lineEnd?: number;
   isCompleted: boolean;
   isError: boolean;
 }
@@ -28,6 +34,86 @@ interface EditToolGroupBlockProps {
 const MAX_VISIBLE_ITEMS = 3;
 /** Height per item in pixels */
 const ITEM_HEIGHT = 32;
+
+const CONTAINER_STYLE: React.CSSProperties = { margin: '12px 0' };
+
+const TITLE_SECTION_STYLE: React.CSSProperties = { overflow: 'hidden' };
+
+const TITLE_TEXT_STYLE: React.CSSProperties = { flexShrink: 0 };
+
+const TITLE_SUMMARY_STYLE: React.CSSProperties = {
+  color: 'var(--text-secondary)',
+  marginLeft: '4px',
+  flexShrink: 0,
+};
+
+const TOTAL_STATS_STYLE: React.CSSProperties = {
+  marginLeft: '12px',
+  fontSize: '12px',
+  fontFamily: 'var(--idea-editor-font-family, monospace)',
+  fontWeight: 600,
+  whiteSpace: 'nowrap',
+  flexShrink: 0,
+};
+
+const ADDED_TEXT_STYLE: React.CSSProperties = { color: 'var(--diff-added-accent)' };
+const DELETED_TEXT_STYLE: React.CSSProperties = { color: 'var(--diff-deleted-accent)' };
+const STATS_SPACER_STYLE: React.CSSProperties = { margin: '0 4px' };
+
+const FILE_ICON_STYLE: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  width: '16px',
+  height: '16px',
+  flexShrink: 0,
+};
+
+const FILE_NAME_STYLE: React.CSSProperties = {
+  fontSize: '12px',
+  color: 'var(--text-primary)',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  flex: 1,
+  minWidth: 0,
+  cursor: 'pointer',
+};
+
+const ITEM_STATS_STYLE: React.CSSProperties = {
+  fontSize: '11px',
+  fontFamily: 'var(--idea-editor-font-family, monospace)',
+  fontWeight: 600,
+  whiteSpace: 'nowrap',
+  flexShrink: 0,
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '6px',
+};
+
+const LINE_INFO_STYLE: React.CSSProperties = { color: 'var(--text-secondary)' };
+
+const ITEM_STATS_SPACER_STYLE: React.CSSProperties = { margin: '0 2px' };
+
+const ACTIONS_STYLE: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+  flexShrink: 0,
+};
+
+const ACTION_ICON_STYLE: React.CSSProperties = { fontSize: '12px' };
+
+const STATUS_INDICATOR_STYLE: React.CSSProperties = { marginLeft: '4px' };
+
+const FILE_LIST_ITEM_STYLE: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  padding: '4px 8px',
+  borderRadius: '4px',
+  minHeight: `${ITEM_HEIGHT}px`,
+  flexShrink: 0,
+  gap: '8px',
+};
 
 /**
  * Compute diff statistics (additions and deletions count)
@@ -84,51 +170,123 @@ function computeDiffStats(oldString: string, newString: string): { additions: nu
  * Parse item to EditItem
  */
 function parseEditItem(item: { name?: string; input?: ToolInput; result?: ToolResultBlock | null }): EditItem | null {
-  const { input, result } = item;
+  const result = item.result;
+  const input = item.input ? normalizeToolInput(item.name, item.input) : item.input;
   if (!input) return null;
 
-  const filePath =
-    (input.file_path as string | undefined) ??
-    (input.filePath as string | undefined) ??
-    (input.path as string | undefined) ??
-    (input.target_file as string | undefined) ??
-    (input.targetFile as string | undefined);
+  const target = resolveToolTarget({
+    ...input,
+    file_path: (typeof input.file_path === 'string' ? input.file_path : undefined) ??
+      (typeof input.filePath === 'string' ? input.filePath : undefined),
+    target_file: (typeof input.target_file === 'string' ? input.target_file : undefined) ??
+      (typeof input.targetFile === 'string' ? input.targetFile : undefined),
+  }, item.name);
 
-  if (!filePath) return null;
+  if (!target) return null;
 
   const oldString =
-    (input.old_string as string | undefined) ??
-    (input.oldString as string | undefined) ??
+    (typeof input.old_string === 'string' ? input.old_string : undefined) ??
+    (typeof input.oldString === 'string' ? input.oldString : undefined) ??
     '';
   const newString =
-    (input.new_string as string | undefined) ??
-    (input.newString as string | undefined) ??
+    (typeof input.new_string === 'string' ? input.new_string : undefined) ??
+    (typeof input.newString === 'string' ? input.newString : undefined) ??
     '';
 
   const { additions, deletions } = computeDiffStats(oldString, newString);
+  const lineInfo = getToolLineInfo(input, target, result);
   const isCompleted = result !== undefined && result !== null;
   const isError = isCompleted && result?.is_error === true;
 
   return {
-    filePath,
-    fileName: getFileName(filePath) || filePath,
+    filePath: target.rawPath,
+    openPath: target.openPath,
+    displayPath: target.displayPath,
+    fileName: target.cleanFileName,
     oldString,
     newString,
     additions,
     deletions,
+    lineStart: lineInfo.start,
+    lineEnd: lineInfo.end,
     isCompleted,
     isError,
   };
 }
 
 /**
- * Get file icon SVG
+ * Get file icon SVG by file name (with extension).
  */
-function getFileIconSvg(filePath: string): string {
-  const name = getFileName(filePath);
-  const extension = name.indexOf('.') !== -1 ? name.split('.').pop() : '';
-  return getFileIcon(extension, name);
+function getFileIconSvg(fileName: string): string {
+  const extension = fileName.includes('.') ? fileName.split('.').pop() : '';
+  return getFileIcon(extension ?? '', fileName);
 }
+
+interface EditFileItemProps {
+  item: EditItem;
+  onFileClick: (item: EditItem, e: React.MouseEvent) => void;
+  onShowDiff: (item: EditItem, e: React.MouseEvent) => void;
+  onRefresh: (filePath: string, e: React.MouseEvent) => void;
+  t: (key: string, opts?: Record<string, unknown>) => string;
+}
+
+const EditFileItem = ({ item, onFileClick, onShowDiff, onRefresh, t }: EditFileItemProps) => {
+  const fileLinkTooltip = useResolvedFileLinkTooltip(item.filePath, item.displayPath);
+
+  return (
+    <div className="file-list-item" style={FILE_LIST_ITEM_STYLE}>
+      <span
+        style={FILE_ICON_STYLE}
+        dangerouslySetInnerHTML={{ __html: getFileIconSvg(item.fileName) }}
+      />
+      <span
+        className="clickable-file"
+        onClick={(e) => onFileClick(item, e)}
+        style={FILE_NAME_STYLE}
+        {...fileLinkTooltip}
+      >
+        {item.displayPath}
+      </span>
+
+      {(item.lineStart || item.additions > 0 || item.deletions > 0) && (
+        <span style={ITEM_STATS_STYLE}>
+          {item.lineStart && (
+            <span style={LINE_INFO_STYLE}>
+              {item.lineEnd && item.lineEnd !== item.lineStart
+                ? t('tools.lineRange', { start: item.lineStart, end: item.lineEnd })
+                : t('tools.lineSingle', { line: item.lineStart })}
+            </span>
+          )}
+          {item.additions > 0 && <span style={ADDED_TEXT_STYLE}>+{item.additions}</span>}
+          {item.additions > 0 && item.deletions > 0 && <span style={ITEM_STATS_SPACER_STYLE} />}
+          {item.deletions > 0 && <span style={DELETED_TEXT_STYLE}>-{item.deletions}</span>}
+        </span>
+      )}
+
+      <div style={ACTIONS_STYLE}>
+        <button
+          onClick={(e) => onShowDiff(item, e)}
+          title={t('tools.showDiffInIdea')}
+          className="edit-group-action-btn"
+        >
+          <span className="codicon codicon-diff" style={ACTION_ICON_STYLE} />
+        </button>
+        <button
+          onClick={(e) => onRefresh(item.openPath, e)}
+          title={t('tools.refreshFileInIdea')}
+          className="edit-group-action-btn"
+        >
+          <span className="codicon codicon-refresh" style={ACTION_ICON_STYLE} />
+        </button>
+      </div>
+
+      <div
+        className={`tool-status-indicator ${item.isError ? 'error' : item.isCompleted ? 'completed' : 'pending'}`}
+        style={STATUS_INDICATOR_STYLE}
+      />
+    </div>
+  );
+};
 
 const EditToolGroupBlock = ({ items }: EditToolGroupBlockProps) => {
   const [expanded, setExpanded] = useState(true);
@@ -149,7 +307,7 @@ const EditToolGroupBlock = ({ items }: EditToolGroupBlockProps) => {
     editItems.forEach(item => {
       if (item.isCompleted && !item.isError && !refreshedFilesRef.current.has(item.filePath)) {
         refreshedFilesRef.current.add(item.filePath);
-        refreshFile(item.filePath);
+        refreshFile(item.openPath);
       }
     });
   }, [editItems]);
@@ -176,14 +334,29 @@ const EditToolGroupBlock = ({ items }: EditToolGroupBlockProps) => {
     ? MAX_VISIBLE_ITEMS * ITEM_HEIGHT
     : editItems.length * ITEM_HEIGHT;
 
-  const handleFileClick = (filePath: string, e: React.MouseEvent) => {
+  const headerStyle: React.CSSProperties = {
+    borderBottom: expanded ? '1px solid var(--border-primary)' : undefined,
+  };
+
+  const detailsStyle: React.CSSProperties = {
+    padding: '6px 8px',
+    border: 'none',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0',
+    maxHeight: `${listHeight + 12}px`,
+    overflowY: needsScroll ? 'auto' : 'hidden',
+    overflowX: 'hidden',
+  };
+
+  const handleFileClick = (item: EditItem, e: React.MouseEvent) => {
     e.stopPropagation();
-    openFile(filePath);
+    openFile(item.openPath, item.lineStart, item.lineEnd);
   };
 
   const handleShowDiff = (item: EditItem, e: React.MouseEvent) => {
     e.stopPropagation();
-    showDiff(item.filePath, item.oldString, item.newString, t('tools.editPrefix', { fileName: item.fileName }));
+    showDiff(item.openPath, item.oldString, item.newString, t('tools.editPrefix', { fileName: item.fileName }));
   };
 
   const handleRefresh = (filePath: string, e: React.MouseEvent) => {
@@ -193,41 +366,26 @@ const EditToolGroupBlock = ({ items }: EditToolGroupBlockProps) => {
   };
 
   return (
-    <div className="task-container" style={{ margin: '12px 0' }}>
+    <div className="task-container" style={CONTAINER_STYLE}>
       <div
         className="task-header"
         onClick={() => setExpanded((prev) => !prev)}
-        style={{
-          borderBottom: expanded ? '1px solid var(--border-primary)' : undefined,
-        }}
+        style={headerStyle}
       >
-        <div className="task-title-section" style={{ overflow: 'hidden' }}>
+        <div className="task-title-section" style={TITLE_SECTION_STYLE}>
           <span className="codicon codicon-edit tool-title-icon" />
-          <span className="tool-title-text" style={{ flexShrink: 0 }}>
+          <span className="tool-title-text" style={TITLE_TEXT_STYLE}>
             {t('tools.editBatchTitle')}
           </span>
-          <span className="tool-title-summary" style={{
-            color: 'var(--text-secondary)',
-            marginLeft: '4px',
-            flexShrink: 0,
-          }}>
+          <span className="tool-title-summary" style={TITLE_SUMMARY_STYLE}>
             ({editItems.length})
           </span>
 
           {(totalAdditions > 0 || totalDeletions > 0) && (
-            <span
-              style={{
-                marginLeft: '12px',
-                fontSize: '12px',
-                fontFamily: 'var(--idea-editor-font-family, monospace)',
-                fontWeight: 600,
-                whiteSpace: 'nowrap',
-                flexShrink: 0,
-              }}
-            >
-              {totalAdditions > 0 && <span style={{ color: '#89d185' }}>+{totalAdditions}</span>}
-              {totalAdditions > 0 && totalDeletions > 0 && <span style={{ margin: '0 4px' }} />}
-              {totalDeletions > 0 && <span style={{ color: '#ff6b6b' }}>-{totalDeletions}</span>}
+            <span style={TOTAL_STATS_STYLE}>
+              {totalAdditions > 0 && <span style={ADDED_TEXT_STYLE}>+{totalAdditions}</span>}
+              {totalAdditions > 0 && totalDeletions > 0 && <span style={STATS_SPACER_STYLE} />}
+              {totalDeletions > 0 && <span style={DELETED_TEXT_STYLE}>-{totalDeletions}</span>}
             </span>
           )}
         </div>
@@ -237,101 +395,17 @@ const EditToolGroupBlock = ({ items }: EditToolGroupBlockProps) => {
         <div
           ref={listRef}
           className="task-details file-list-container"
-          style={{
-            padding: '6px 8px',
-            border: 'none',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0',
-            maxHeight: `${listHeight + 12}px`,
-            overflowY: needsScroll ? 'auto' : 'hidden',
-            overflowX: 'hidden',
-          }}
+          style={detailsStyle}
         >
           {editItems.map((item, index) => (
-            <div
+            <EditFileItem
               key={index}
-              className="file-list-item"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                padding: '4px 8px',
-                borderRadius: '4px',
-                minHeight: `${ITEM_HEIGHT}px`,
-                flexShrink: 0,
-                gap: '8px',
-              }}
-            >
-              {/* File icon and name */}
-              <span
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  width: '16px',
-                  height: '16px',
-                  flexShrink: 0,
-                }}
-                dangerouslySetInnerHTML={{ __html: getFileIconSvg(item.filePath) }}
-              />
-              <span
-                className="clickable-file"
-                onClick={(e) => handleFileClick(item.filePath, e)}
-                style={{
-                  fontSize: '12px',
-                  color: 'var(--text-primary)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  flex: 1,
-                  minWidth: 0,
-                  cursor: 'pointer',
-                }}
-                title={item.filePath}
-              >
-                {item.fileName}
-              </span>
-
-              {/* Diff stats */}
-              {(item.additions > 0 || item.deletions > 0) && (
-                <span
-                  style={{
-                    fontSize: '11px',
-                    fontFamily: 'var(--idea-editor-font-family, monospace)',
-                    fontWeight: 600,
-                    whiteSpace: 'nowrap',
-                    flexShrink: 0,
-                  }}
-                >
-                  {item.additions > 0 && <span style={{ color: '#89d185' }}>+{item.additions}</span>}
-                  {item.additions > 0 && item.deletions > 0 && <span style={{ margin: '0 2px' }} />}
-                  {item.deletions > 0 && <span style={{ color: '#ff6b6b' }}>-{item.deletions}</span>}
-                </span>
-              )}
-
-              {/* Action buttons */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                <button
-                  onClick={(e) => handleShowDiff(item, e)}
-                  title={t('tools.showDiffInIdea')}
-                  className="edit-group-action-btn"
-                >
-                  <span className="codicon codicon-diff" style={{ fontSize: '12px' }} />
-                </button>
-                <button
-                  onClick={(e) => handleRefresh(item.filePath, e)}
-                  title={t('tools.refreshFileInIdea')}
-                  className="edit-group-action-btn"
-                >
-                  <span className="codicon codicon-refresh" style={{ fontSize: '12px' }} />
-                </button>
-              </div>
-
-              {/* Status indicator */}
-              <div
-                className={`tool-status-indicator ${item.isError ? 'error' : item.isCompleted ? 'completed' : 'pending'}`}
-                style={{ marginLeft: '4px' }}
-              />
-            </div>
+              item={item}
+              onFileClick={handleFileClick}
+              onShowDiff={handleShowDiff}
+              onRefresh={handleRefresh}
+              t={t}
+            />
           ))}
         </div>
       )}

@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { McpServer, McpServerStatusInfo, ServerToolsState, RefreshLog, CacheKeys } from '../types';
 import { sendToJava } from '../../../utils/bridge';
-import { readCache, readToolsCache } from '../utils';
+import { readCache, readToolsCache, writeCache } from '../utils';
 
 export interface UseServerDataOptions {
   isCodexMode: boolean;
@@ -87,19 +87,6 @@ export function useServerData({
 
   // Load server tools list
   const loadServerTools = useCallback((server: McpServer, forceRefresh = false) => {
-    // Tool listing not supported in Codex mode
-    if (isCodexMode) {
-      setServerTools(prev => ({
-        ...prev,
-        [server.id]: {
-          tools: [],
-          loading: false,
-          error: 'Tool listing not supported in Codex mode'
-        }
-      }));
-      return;
-    }
-
     // Check cache (unless force refresh)
     if (!forceRefresh) {
       const cachedTools = readToolsCache(server.id, cacheKeys);
@@ -139,11 +126,11 @@ export function useServerData({
       'info',
       undefined,
       server.name || server.id,
-      `get_mcp_server_tools request to backend`
+      `get_${messagePrefix}mcp_server_tools request to backend`
     );
 
-    sendToJava('get_mcp_server_tools', { serverId: server.id, forceRefresh });
-  }, [isCodexMode, cacheKeys, t, onLog]);
+    sendToJava(`get_${messagePrefix}mcp_server_tools`, { serverId: server.id, forceRefresh });
+  }, [cacheKeys, messagePrefix, t, onLog]);
 
   // Initialization and data loading
   useEffect(() => {
@@ -231,6 +218,8 @@ export function useServerData({
         const serverList: McpServer[] = JSON.parse(jsonStr);
         setServers(serverList);
         setLoading(false);
+        // Persist to cache so subsequent mounts can load instantly
+        writeCache(cacheKeys.SERVERS, serverList);
         onLog(t('mcp.logs.loadedServersSuccess', { count: serverList.length }), 'success');
       } catch (error) {
         console.error('[McpSettings] Failed to parse servers:', error);
@@ -248,6 +237,8 @@ export function useServerData({
         });
         setServerStatus(statusMap);
         setStatusLoading(false);
+        // Persist status to cache
+        writeCache(cacheKeys.STATUS, statusList);
 
         const statusCount = {
           connected: statusList.filter(s => s.status === 'connected').length,

@@ -2,10 +2,12 @@ import { useMemo } from 'react';
 import type { ClaudeMessage, ClaudeContentBlock, ToolResultBlock } from '../types';
 import type { FileChangeSummary, EditOperation, FileChangeStatus } from '../types/fileChanges';
 import { getFileName } from '../utils/helpers';
-import { FILE_MODIFY_TOOL_NAMES, isToolName } from '../utils/toolConstants';
+import { FILE_MODIFY_TOOL_NAMES, isToolName, normalizeToolName } from '../utils/toolConstants';
+import { normalizeToolInput } from '../utils/toolInputNormalization';
+import { getToolLineInfo } from '../utils/toolPresentation';
 
 /** Write tool names that indicate a new file */
-const WRITE_TOOL_NAMES = new Set(['write', 'create_file']);
+const WRITE_TOOL_NAMES = new Set(['write', 'write_file', 'create_file']);
 
 /**
  * Maximum lines to use LCS algorithm.
@@ -124,15 +126,22 @@ function computeLcsDiff(
 
 /**
  * Extract file path from tool input (handles various naming conventions)
+ * Ensures the returned value is a string, not an object (e.g., MCP tool path can be an object)
  */
 function extractFilePath(input: Record<string, unknown>): string | null {
+  const pathValue = input.path;
+  const filePathValue = input.file_path;
+  const targetFileValue = input.target_file;
+  const targetFileValue2 = input.targetFile;
+  const notebookPathValue = input.notebook_path;
+
   return (
-    (input.file_path as string | undefined) ??
-    (input.filePath as string | undefined) ??
-    (input.path as string | undefined) ??
-    (input.target_file as string | undefined) ??
-    (input.targetFile as string | undefined) ??
-    (input.notebook_path as string | undefined) ??
+    (typeof input.filePath === 'string' ? input.filePath : undefined) ??
+    (typeof filePathValue === 'string' ? filePathValue : undefined) ??
+    (typeof pathValue === 'string' ? pathValue : undefined) ??
+    (typeof targetFileValue === 'string' ? targetFileValue : undefined) ??
+    (typeof targetFileValue2 === 'string' ? targetFileValue2 : undefined) ??
+    (typeof notebookPathValue === 'string' ? notebookPathValue : undefined) ??
     null
   );
 }
@@ -142,15 +151,15 @@ function extractFilePath(input: Record<string, unknown>): string | null {
  */
 function extractStrings(input: Record<string, unknown>): { oldString: string; newString: string; replaceAll?: boolean } {
   const oldString =
-    (input.old_string as string | undefined) ??
-    (input.oldString as string | undefined) ??
+    (typeof input.old_string === 'string' ? input.old_string : undefined) ??
+    (typeof input.oldString === 'string' ? input.oldString : undefined) ??
     '';
   const newString =
-    (input.new_string as string | undefined) ??
-    (input.newString as string | undefined) ??
-    (input.content as string | undefined) ?? // Write tool uses 'content'
+    (typeof input.new_string === 'string' ? input.new_string : undefined) ??
+    (typeof input.newString === 'string' ? input.newString : undefined) ??
+    (typeof input.content === 'string' ? input.content : undefined) ?? // Write tool uses 'content'
     '';
-  const replaceAll = input.replace_all as boolean | undefined ?? input.replaceAll as boolean | undefined;
+  const replaceAll = typeof input.replace_all === 'boolean' ? input.replace_all : (typeof input.replaceAll === 'boolean' ? input.replaceAll : undefined);
 
   return { oldString, newString, replaceAll };
 }
@@ -163,7 +172,7 @@ function determineFileStatus(operations: EditOperation[]): FileChangeStatus {
 
   const firstOp = operations[0];
   // Write/create_file tools indicate a new file
-  if (WRITE_TOOL_NAMES.has(firstOp.toolName.toLowerCase())) {
+  if (WRITE_TOOL_NAMES.has(normalizeToolName(firstOp.toolName))) {
     return 'A';
   }
   // If first operation has empty oldString, it's likely a new file
@@ -213,12 +222,13 @@ export function useFileChanges({
       blocks.forEach((block) => {
         if (block.type !== 'tool_use') return;
 
-        const toolName = block.name?.toLowerCase() ?? '';
+        const toolName = normalizeToolName(block.name ?? '');
 
         // Check if this is a file modification tool
         if (!isToolName(toolName, FILE_MODIFY_TOOL_NAMES)) return;
 
-        const input = block.input as Record<string, unknown> | undefined;
+        const rawInput = block.input as Record<string, unknown> | undefined;
+        const input = rawInput ? normalizeToolInput(block.name, rawInput) as Record<string, unknown> : undefined;
         if (!input) return;
 
         const filePath = extractFilePath(input);
@@ -230,6 +240,7 @@ export function useFileChanges({
 
         const { oldString, newString, replaceAll } = extractStrings(input);
         const { additions, deletions } = computeDiffStats(oldString, newString);
+        const lineInfo = getToolLineInfo(input, undefined, result);
 
         const operation: EditOperation = {
           toolName,
@@ -238,6 +249,8 @@ export function useFileChanges({
           additions,
           deletions,
           replaceAll,
+          lineStart: lineInfo.start,
+          lineEnd: lineInfo.end,
         };
 
         // Group by file path
@@ -259,12 +272,16 @@ export function useFileChanges({
       const rawStatus = determineFileStatus(operations);
       const status: FileChangeStatus = rawStatus === 'A' ? 'A' : 'M';
 
+      const firstLineOperation = operations.find((op) => typeof op.lineStart === 'number');
+
       summaries.push({
         filePath: String(filePath || ''),
         fileName: String(getFileName(filePath) || filePath || 'unknown'),
         status,
         additions: totalAdditions,
         deletions: totalDeletions,
+        lineStart: firstLineOperation?.lineStart,
+        lineEnd: firstLineOperation?.lineEnd,
         operations,
       });
     });

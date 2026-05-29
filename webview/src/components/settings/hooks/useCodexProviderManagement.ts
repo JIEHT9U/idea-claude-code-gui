@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { CodexProviderConfig } from '../../../types/provider';
-import { STORAGE_KEYS } from '../../../types/provider';
 
 const sendToJava = (message: string) => {
   if (window.sendToJava) {
@@ -8,24 +8,6 @@ const sendToJava = (message: string) => {
   }
   // Silently ignore when sendToJava is unavailable to avoid log pollution in production
 };
-
-/**
- * Safely set localStorage and dispatch a custom event to notify other components in the same tab
- * @param key localStorage key
- * @param value the value to store
- * @returns whether the operation succeeded
- */
-function safeSetLocalStorage(key: string, value: string): boolean {
-  try {
-    localStorage.setItem(key, value);
-    // Dispatch custom event to notify other components in the same tab
-    window.dispatchEvent(new CustomEvent('localStorageChange', { detail: { key } }));
-    return true;
-  } catch (e) {
-    console.warn(`Failed to save to localStorage (key: ${key}):`, e);
-    return false;
-  }
-}
 
 export interface CodexProviderDialogState {
   isOpen: boolean;
@@ -43,6 +25,7 @@ export interface UseCodexProviderManagementOptions {
 }
 
 export function useCodexProviderManagement(options: UseCodexProviderManagementOptions = {}) {
+  const { t } = useTranslation();
   const { onSuccess } = options;
 
   // Codex provider list state
@@ -83,11 +66,8 @@ export function useCodexProviderManagement(options: UseCodexProviderManagementOp
       setCodexProviders((prev) =>
         prev.map((p) => ({ ...p, isActive: p.id === activeProvider.id }))
       );
-      // Sync customModels to localStorage
-      safeSetLocalStorage(
-        STORAGE_KEYS.CODEX_CUSTOM_MODELS,
-        JSON.stringify(activeProvider.customModels || [])
-      );
+      // Custom models are now plugin-level, managed by PluginCustomModels in ProviderTabSection.
+      // No longer sync provider-level customModels to localStorage.
     }
   }, []);
 
@@ -119,7 +99,7 @@ export function useCodexProviderManagement(options: UseCodexProviderManagementOp
 
       if (isAdding) {
         sendToJava(`add_codex_provider:${JSON.stringify(providerData)}`);
-        onSuccess?.('Codex 供应商已添加');
+        onSuccess?.(t('toast.providerAdded'));
       } else {
         const updateData = {
           id: providerData.id,
@@ -129,20 +109,16 @@ export function useCodexProviderManagement(options: UseCodexProviderManagementOp
             configToml: providerData.configToml,
             authJson: providerData.authJson,
             customModels: providerData.customModels,
+            messageEnvVars: providerData.messageEnvVars || [],
+            mcpEnvVars: providerData.mcpEnvVars || [],
           },
         };
         sendToJava(`update_codex_provider:${JSON.stringify(updateData)}`);
-        onSuccess?.('Codex 供应商已更新');
+        onSuccess?.(t('toast.providerUpdated'));
       }
 
-      // If updating the currently active provider, sync customModels to localStorage
-      const activeProvider = codexProviders.find(p => p.isActive);
-      if (activeProvider && activeProvider.id === providerData.id) {
-        safeSetLocalStorage(
-          STORAGE_KEYS.CODEX_CUSTOM_MODELS,
-          JSON.stringify(providerData.customModels || [])
-        );
-      }
+      // Custom models are now plugin-level, managed by PluginCustomModels in ProviderTabSection.
+      // No longer sync provider-level customModels to localStorage.
 
       setCodexProviderDialog({ isOpen: false, provider: null });
       setCodexLoading(true);
@@ -157,6 +133,15 @@ export function useCodexProviderManagement(options: UseCodexProviderManagementOp
     setCodexLoading(true);
   }, []);
 
+  const handleRevokeCodexLocalConfigAuthorization = useCallback((fallbackProviderId?: string) => {
+    const data = {
+      fallbackProviderId: fallbackProviderId ?? '',
+    };
+    sendToJava(`revoke_codex_local_config_authorization:${JSON.stringify(data)}`);
+    setCodexLoading(true);
+    setCodexConfigLoading(true);
+  }, []);
+
   // Delete Codex provider
   const handleDeleteCodexProvider = useCallback((provider: CodexProviderConfig) => {
     setDeleteCodexConfirm({ isOpen: true, provider });
@@ -169,7 +154,7 @@ export function useCodexProviderManagement(options: UseCodexProviderManagementOp
 
     const data = { id: provider.id };
     sendToJava(`delete_codex_provider:${JSON.stringify(data)}`);
-    onSuccess?.('Codex 供应商已删除');
+    onSuccess?.(t('toast.providerDeleted'));
     setCodexLoading(true);
     setDeleteCodexConfirm({ isOpen: false, provider: null });
   }, [deleteCodexConfirm.provider, onSuccess]);
@@ -185,7 +170,6 @@ export function useCodexProviderManagement(options: UseCodexProviderManagementOp
     codexLoading,
     codexProviderDialog,
     deleteCodexConfirm,
-
     // Methods
     loadCodexProviders,
     updateCodexProviders,
@@ -196,10 +180,10 @@ export function useCodexProviderManagement(options: UseCodexProviderManagementOp
     handleCloseCodexProviderDialog,
     handleSaveCodexProvider,
     handleSwitchCodexProvider,
+    handleRevokeCodexLocalConfigAuthorization,
     handleDeleteCodexProvider,
     confirmDeleteCodexProvider,
     cancelDeleteCodexProvider,
-
     // Setter
     setCodexLoading,
     setCodexConfigLoading,

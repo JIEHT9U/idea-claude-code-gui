@@ -1,6 +1,8 @@
 import { useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { ProviderConfig } from '../../../types/provider';
-import { STORAGE_KEYS } from '../../../types/provider';
+import { SPECIAL_PROVIDER_IDS } from '../../../types/provider';
+import { writeClaudeModelMapping } from '../../../utils/claudeModelMapping';
 
 const sendToJava = (message: string) => {
   if (window.sendToJava) {
@@ -25,6 +27,7 @@ export interface UseProviderManagementOptions {
 }
 
 export function useProviderManagement(options: UseProviderManagementOptions = {}) {
+  const { t } = useTranslation();
   const { onError, onSuccess } = options;
 
   // Provider list state
@@ -43,41 +46,10 @@ export function useProviderManagement(options: UseProviderManagementOptions = {}
     provider: null,
   });
 
-  // Safely set localStorage and dispatch a custom event to notify other components in the same tab
-  const safeSetLocalStorage = useCallback((key: string, value: string): boolean => {
-    try {
-      localStorage.setItem(key, value);
-      window.dispatchEvent(new CustomEvent('localStorageChange', { detail: { key } }));
-      return true;
-    } catch {
-      return false;
-    }
-  }, []);
-
-  // Sync active provider custom models to localStorage
-  const syncActiveProviderCustomModels = useCallback((provider?: ProviderConfig | null) => {
-    if (typeof window === 'undefined' || !window.localStorage) return;
-    if (!provider || !provider.customModels || provider.customModels.length === 0) {
-      try {
-        window.localStorage.removeItem(STORAGE_KEYS.CLAUDE_CUSTOM_MODELS);
-        window.dispatchEvent(new CustomEvent('localStorageChange', { detail: { key: STORAGE_KEYS.CLAUDE_CUSTOM_MODELS } }));
-      } catch {
-        // ignore
-      }
-      return;
-    }
-    safeSetLocalStorage(STORAGE_KEYS.CLAUDE_CUSTOM_MODELS, JSON.stringify(provider.customModels));
-  }, [safeSetLocalStorage]);
-
   // Sync active provider model mapping to localStorage
   const syncActiveProviderModelMapping = useCallback((provider?: ProviderConfig | null) => {
-    if (typeof window === 'undefined' || !window.localStorage) return;
     if (!provider || !provider.settingsConfig || !provider.settingsConfig.env) {
-      try {
-        window.localStorage.removeItem('claude-model-mapping');
-      } catch {
-        // ignore
-      }
+      writeClaudeModelMapping({});
       return;
     }
     const env = provider.settingsConfig.env as Record<string, any>;
@@ -87,16 +59,7 @@ export function useProviderManagement(options: UseProviderManagementOptions = {}
       sonnet: env.ANTHROPIC_DEFAULT_SONNET_MODEL ?? '',
       opus: env.ANTHROPIC_DEFAULT_OPUS_MODEL ?? '',
     };
-    const hasValue = Object.values(mapping).some((v) => v && String(v).trim().length > 0);
-    try {
-      if (hasValue) {
-        window.localStorage.setItem('claude-model-mapping', JSON.stringify(mapping));
-      } else {
-        window.localStorage.removeItem('claude-model-mapping');
-      }
-    } catch {
-      // ignore
-    }
+    writeClaudeModelMapping(mapping);
   }, []);
 
   // Load provider list
@@ -112,11 +75,12 @@ export function useProviderManagement(options: UseProviderManagementOptions = {}
       const active = providersList.find((p) => p.isActive);
       if (active) {
         syncActiveProviderModelMapping(active);
-        syncActiveProviderCustomModels(active);
+      } else {
+        syncActiveProviderModelMapping(null);
       }
       setLoading(false);
     },
-    [syncActiveProviderModelMapping, syncActiveProviderCustomModels]
+    [syncActiveProviderModelMapping]
   );
 
   // Update active provider (used by window callback)
@@ -127,10 +91,9 @@ export function useProviderManagement(options: UseProviderManagementOptions = {}
           prev.map((p) => ({ ...p, isActive: p.id === activeProvider.id }))
         );
         syncActiveProviderModelMapping(activeProvider);
-        syncActiveProviderCustomModels(activeProvider);
       }
     },
-    [syncActiveProviderModelMapping, syncActiveProviderCustomModels]
+    [syncActiveProviderModelMapping]
   );
 
   // Open edit dialog
@@ -158,7 +121,7 @@ export function useProviderManagement(options: UseProviderManagementOptions = {}
       jsonConfig: string;
     }) => {
       if (!data.providerName) {
-        onError?.('请输入供应商名称');
+        onError?.(t('toast.pleaseEnterProviderName'));
         return false;
       }
 
@@ -166,7 +129,7 @@ export function useProviderManagement(options: UseProviderManagementOptions = {}
       try {
         parsedConfig = JSON.parse(data.jsonConfig || '{}');
       } catch (e) {
-        onError?.('JSON 配置格式无效');
+        onError?.(t('toast.invalidJsonConfig'));
         return false;
       }
 
@@ -185,7 +148,7 @@ export function useProviderManagement(options: UseProviderManagementOptions = {}
           ...updates,
         };
         sendToJava(`add_provider:${JSON.stringify(newProvider)}`);
-        onSuccess?.('供应商已添加');
+        onSuccess?.(t('toast.providerAdded'));
       } else {
         if (!providerDialog.provider) return false;
 
@@ -199,7 +162,7 @@ export function useProviderManagement(options: UseProviderManagementOptions = {}
           updates,
         };
         sendToJava(`update_provider:${JSON.stringify(updateData)}`);
-        onSuccess?.('供应商已更新');
+        onSuccess?.(t('toast.providerUpdated'));
 
         if (isActive) {
           syncActiveProviderModelMapping({
@@ -223,15 +186,20 @@ export function useProviderManagement(options: UseProviderManagementOptions = {}
   const handleSwitchProvider = useCallback(
     (id: string) => {
       const data = { id };
+      if (id === SPECIAL_PROVIDER_IDS.DISABLED) {
+        syncActiveProviderModelMapping(null);
+        sendToJava(`switch_provider:${JSON.stringify(data)}`);
+        setLoading(true);
+        return;
+      }
       const target = providers.find((p) => p.id === id);
       if (target) {
         syncActiveProviderModelMapping(target);
-        syncActiveProviderCustomModels(target);
       }
       sendToJava(`switch_provider:${JSON.stringify(data)}`);
       setLoading(true);
     },
-    [providers, syncActiveProviderModelMapping, syncActiveProviderCustomModels]
+    [providers, syncActiveProviderModelMapping]
   );
 
   // Delete provider
@@ -246,7 +214,7 @@ export function useProviderManagement(options: UseProviderManagementOptions = {}
 
     const data = { id: provider.id };
     sendToJava(`delete_provider:${JSON.stringify(data)}`);
-    onSuccess?.('供应商已删除');
+    onSuccess?.(t('toast.providerDeleted'));
     setLoading(true);
     setDeleteConfirm({ isOpen: false, provider: null });
   }, [deleteConfirm.provider, onSuccess]);
@@ -276,7 +244,6 @@ export function useProviderManagement(options: UseProviderManagementOptions = {}
     confirmDeleteProvider,
     cancelDeleteProvider,
     syncActiveProviderModelMapping,
-    syncActiveProviderCustomModels,
 
     // Setter (for external loading state control)
     setLoading,

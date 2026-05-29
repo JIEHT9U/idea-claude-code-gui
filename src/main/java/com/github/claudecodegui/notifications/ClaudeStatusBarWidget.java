@@ -1,16 +1,19 @@
 package com.github.claudecodegui.notifications;
 
-import com.github.claudecodegui.ClaudeCodeGuiBundle;
+import com.github.claudecodegui.i18n.ClaudeCodeGuiBundle;
+import com.github.claudecodegui.settings.CodemossSettingsService;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.wm.CustomStatusBarWidget;
 import com.intellij.openapi.wm.StatusBar;
 import com.intellij.openapi.wm.StatusBarWidget;
 import com.intellij.openapi.wm.StatusBarWidgetFactory;
-import com.intellij.openapi.wm.WindowManager;
 import com.intellij.openapi.wm.ToolWindowManager;
+import com.intellij.openapi.wm.WindowManager;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import com.intellij.openapi.application.ApplicationManager;
 
 import javax.swing.*;
 import java.awt.event.MouseAdapter;
@@ -25,7 +28,7 @@ public class ClaudeStatusBarWidget implements CustomStatusBarWidget, StatusBarWi
     private final Project project;
     private StatusBar statusBar;
     private JLabel label;
-    private final AtomicReference<String> textRef = new AtomicReference<>("GUI \uD83E\uDD16");
+    private final AtomicReference<String> textRef = new AtomicReference<>("GUI 🤖");
     private final AtomicReference<String> tooltipRef = new AtomicReference<>(ClaudeCodeGuiBundle.message("status.defaultTooltip"));
     private final AtomicLong visibleUntil = new AtomicLong(0);
 
@@ -47,13 +50,24 @@ public class ClaudeStatusBarWidget implements CustomStatusBarWidget, StatusBarWi
     }
 
     @Override
-    public @NotNull String ID() { return "ClaudeStatusBarWidget"; }
+    public @NotNull String ID() {
+        return "ClaudeStatusBarWidget";
+    }
 
     @Override
     public @NotNull WidgetPresentation getPresentation() {
         return new WidgetPresentation() {
-            @Nullable @Override public String getTooltipText() { return tooltipRef.get(); }
-            @Nullable @Override public com.intellij.util.Consumer<MouseEvent> getClickConsumer() { return null; }
+            @Nullable
+            @Override
+            public String getTooltipText() {
+                return tooltipRef.get();
+            }
+
+            @Nullable
+            @Override
+            public com.intellij.util.Consumer<MouseEvent> getClickConsumer() {
+                return null;
+            }
         };
     }
 
@@ -66,7 +80,7 @@ public class ClaudeStatusBarWidget implements CustomStatusBarWidget, StatusBarWi
             label.addMouseListener(new MouseAdapter() {
                 @Override
                 public void mouseClicked(MouseEvent e) {
-                    if (project.isDisposed()) return;
+                    if (project.isDisposed()) { return; }
                     var toolWindow = ToolWindowManager.getInstance(project).getToolWindow("CCG");
                     if (toolWindow != null) {
                         toolWindow.activate(null);
@@ -78,7 +92,9 @@ public class ClaudeStatusBarWidget implements CustomStatusBarWidget, StatusBarWi
     }
 
     @Override
-    public void install(@NotNull StatusBar statusBar) { this.statusBar = statusBar; }
+    public void install(@NotNull StatusBar statusBar) {
+        this.statusBar = statusBar;
+    }
 
     @Override
     public void dispose() {
@@ -123,12 +139,12 @@ public class ClaudeStatusBarWidget implements CustomStatusBarWidget, StatusBarWi
         String tokenInfo = currentTokenInfo.get();
 
         String icon = switch (status) {
-            case "thinking" -> "\uD83D\uDCAD";
-            case "generating" -> "✏\uFE0F";
+            case "thinking" -> "💭";
+            case "generating" -> "✏️";
             case "waiting" -> "⏳";
             case "success" -> "✓";
             case "error" -> "✗";
-            default -> "\uD83E\uDD16";
+            default -> "🤖";
         };
 
         String statusText = "";
@@ -147,9 +163,9 @@ public class ClaudeStatusBarWidget implements CustomStatusBarWidget, StatusBarWi
         // Add Model Info (Shorten names)
         if (model != null && !model.isEmpty()) {
             String shortModel = model;
-            if (model.contains("sonnet")) shortModel = "Sonnet";
-            else if (model.contains("opus")) shortModel = "Opus";
-            else if (model.contains("haiku")) shortModel = "Haiku";
+            if (model.contains("sonnet")) { shortModel = "Sonnet"; }
+            else if (model.contains("opus")) { shortModel = "Opus"; }
+            else if (model.contains("haiku")) { shortModel = "Haiku"; }
             text.append(" [").append(shortModel).append("]");
         }
 
@@ -166,6 +182,11 @@ public class ClaudeStatusBarWidget implements CustomStatusBarWidget, StatusBarWi
 
         if (!statusText.isEmpty()) {
             text.append(" ").append(statusText);
+        }
+
+        // Add Token Info
+        if (tokenInfo != null && !tokenInfo.isEmpty()) {
+            text.append(" ").append(tokenInfo);
         }
 
         StringBuilder tooltip = new StringBuilder(ClaudeCodeGuiBundle.message("status.tooltip.status", status));
@@ -186,7 +207,7 @@ public class ClaudeStatusBarWidget implements CustomStatusBarWidget, StatusBarWi
     }
 
     public void show(String text, String tooltip, long durationMs) {
-        if (disposed) return;
+        if (disposed) { return; }
         // Stop any existing timer to prevent resource leaks
         if (hideTimer != null) {
             hideTimer.stop();
@@ -200,7 +221,7 @@ public class ClaudeStatusBarWidget implements CustomStatusBarWidget, StatusBarWi
     }
 
     public void hide() {
-        if (disposed) return;
+        if (disposed) { return; }
         if (System.currentTimeMillis() >= visibleUntil.get()) {
             // Revert to standard display
             refreshDisplay(null);
@@ -208,29 +229,62 @@ public class ClaudeStatusBarWidget implements CustomStatusBarWidget, StatusBarWi
     }
 
     private void updateLabel(String text, String tooltip) {
-        if (disposed) return;
+        if (disposed) { return; }
         textRef.set(text);
         tooltipRef.set(tooltip);
+        if (ApplicationManager.getApplication().isDispatchThread()) {
+            updateLabelOnEdt(text, tooltip);
+        } else {
+            ApplicationManager.getApplication().invokeLater(() -> updateLabelOnEdt(text, tooltip));
+        }
+    }
+
+    private void updateLabelOnEdt(String text, String tooltip) {
+        if (disposed) { return; }
         if (label != null) {
             label.setText(text);
             label.setToolTipText(tooltip);
         }
-        if (statusBar != null) statusBar.updateWidget(ID());
+        if (statusBar != null) { statusBar.updateWidget(ID()); }
     }
 
     public static class Factory implements StatusBarWidgetFactory {
-        @Override public @NotNull String getId() { return "ClaudeStatusBarWidget"; }
-        @Override public @NotNull String getDisplayName() { return ClaudeCodeGuiBundle.message("status.widgetName"); }
-        @Override public boolean isAvailable(@NotNull Project project) { return project != null; }
-        @Override public @NotNull StatusBarWidget createWidget(@NotNull Project project) { return new ClaudeStatusBarWidget(project); }
-        @Override public void disposeWidget(@NotNull StatusBarWidget widget) { widget.dispose(); }
+        @Override
+        public @NotNull String getId() {
+            return "ClaudeStatusBarWidget";
+        }
+
+        @Override
+        public @NotNull String getDisplayName() {
+            return ClaudeCodeGuiBundle.message("status.widgetName");
+        }
+
+        @Override
+        public boolean isAvailable(@NotNull Project project) {
+            if (project == null) { return false; }
+            try {
+                return new CodemossSettingsService().getStatusBarWidgetEnabled();
+            } catch (Exception e) {
+                return true;
+            }
+        }
+
+        @Override
+        public @NotNull StatusBarWidget createWidget(@NotNull Project project) {
+            return new ClaudeStatusBarWidget(project);
+        }
+
+        @Override
+        public void disposeWidget(@NotNull StatusBarWidget widget) {
+            widget.dispose();
+        }
 
         @Nullable
         public static ClaudeStatusBarWidget getWidget(@NotNull Project project) {
             StatusBar statusBar = WindowManager.getInstance().getStatusBar(project);
             if (statusBar != null) {
                 StatusBarWidget widget = statusBar.getWidget("ClaudeStatusBarWidget");
-                if (widget instanceof ClaudeStatusBarWidget) return (ClaudeStatusBarWidget) widget;
+                if (widget instanceof ClaudeStatusBarWidget) { return (ClaudeStatusBarWidget) widget; }
             }
             return null;
         }

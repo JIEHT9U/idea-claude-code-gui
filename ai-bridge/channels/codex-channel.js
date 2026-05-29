@@ -2,6 +2,7 @@
  * Codex channel command handler – keeps Codex specific logic separated.
  */
 import { sendMessage as codexSendMessage } from '../services/codex/message-service.js';
+import { getMcpServerTools as codexGetMcpServerTools } from '../services/codex/message-service.js';
 
 /**
  * Execute a Codex command.
@@ -32,12 +33,19 @@ export async function handleCodexCommand(command, args, stdinData) {
           model || '',
           baseUrl || '',
           apiKey || '',
-          reasoningEffort || 'medium',
+          (reasoningEffort === 'max' ? 'xhigh' : (reasoningEffort || 'medium')),
           attachments || []  // Pass attachments to message service
         );
       } else {
         await codexSendMessage(args[0], args[1], args[2], args[3], args[4]);
       }
+      break;
+    }
+
+    case 'getMcpServerTools': {
+      const serverId = stdinData?.serverId || args[0] || null;
+      const serverConfig = stdinData?.serverConfig || null;
+      await codexGetMcpServerTools(serverId, serverConfig);
       break;
     }
 
@@ -47,5 +55,5 @@ export async function handleCodexCommand(command, args, stdinData) {
 }
 
 export function getCodexCommandList() {
-  return ['send'];
+  return ['send', 'getMcpServerTools'];
 }

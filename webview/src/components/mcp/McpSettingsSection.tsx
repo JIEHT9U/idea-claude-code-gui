@@ -143,7 +143,6 @@ export function McpSettingsSection({ currentProvider = 'claude' }: McpSettingsSe
 
   // Use tools list update hook
   useToolsUpdate({
-    isCodexMode,
     cacheKeys,
     setServerTools,
     onLog: addLog,
@@ -163,8 +162,8 @@ export function McpSettingsSection({ currentProvider = 'claude' }: McpSettingsSe
         // ignore
       }
 
-      // Auto-load tools list when expanding
-      if (server && !serverTools[serverId] && !isCodexMode) {
+      // Automatically load tool list when expanded.
+      if (server && !serverTools[serverId]) {
         loadServerTools(server, false);
       }
     } else {
@@ -172,7 +171,7 @@ export function McpSettingsSection({ currentProvider = 'claude' }: McpSettingsSe
       newExpanded.delete(serverId);
       setExpandedServers(newExpanded);
     }
-  }, [servers, expandedServers, serverTools, isCodexMode, cacheKeys, setExpandedServers, loadServerTools]);
+  }, [servers, expandedServers, serverTools, cacheKeys, setExpandedServers, loadServerTools]);
 
   // Edit server
   const handleEdit = useCallback((server: McpServer) => {
@@ -216,8 +215,8 @@ export function McpSettingsSection({ currentProvider = 'claude' }: McpSettingsSe
   // Add server from marketplace
   const handleAddFromMarket = useCallback(() => {
     setShowDropdown(false);
-    alert(t('mcp.marketComingSoon'));
-  }, [t]);
+    addToast(t('mcp.marketComingSoon'), 'info');
+  }, [t, addToast]);
 
   // Save server
   const handleSaveServer = useCallback((server: McpServer) => {
@@ -475,14 +474,16 @@ export function McpSettingsSection({ currentProvider = 'claude' }: McpSettingsSe
       <ToastContainer messages={toasts} onDismiss={dismissToast} />
 
       {/* Tool tooltip popup */}
-      {hoveredTool && (
+      {hoveredTool && (() => {
+        const tooltipStyle: React.CSSProperties = {
+          left: `${Math.min(hoveredTool.position.x, window.innerWidth - 420)}px`,
+          top: `${hoveredTool.position.y}px`,
+        };
+        return (
         <div
           ref={tooltipRef}
           className="mcp-tool-tooltip"
-          style={{
-            left: `${Math.min(hoveredTool.position.x, window.innerWidth - 420)}px`,
-            top: `${hoveredTool.position.y}px`,
-          }}
+          style={tooltipStyle}
         >
           <div className="tooltip-header">
             <span className="tooltip-icon">
@@ -499,7 +500,8 @@ export function McpSettingsSection({ currentProvider = 'claude' }: McpSettingsSe
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

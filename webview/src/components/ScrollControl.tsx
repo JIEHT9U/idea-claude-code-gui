@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { memo, useEffect, useState, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getAppViewport } from '../utils/viewport';
 
@@ -16,12 +16,12 @@ interface ScrollControlProps {
  * - Hidden when content fits within one screen
  * - Always positioned 20px above the input area
  */
-export const ScrollControl = ({ containerRef, inputAreaRef }: ScrollControlProps) => {
+export const ScrollControl = memo(({ containerRef, inputAreaRef }: ScrollControlProps) => {
   const { t } = useTranslation();
   const [visible, setVisible] = useState(false);
   const [direction, setDirection] = useState<'up' | 'down'>('down');
   const [bottomOffset, setBottomOffset] = useState(120);
-  const hideTimerRef = useRef<number | null>(null);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const THRESHOLD = 100; // Distance from bottom threshold (pixels)
   const HIDE_DELAY = 1500; // Delay before hiding after scrolling stops (milliseconds)
@@ -156,8 +156,16 @@ export const ScrollControl = ({ containerRef, inputAreaRef }: ScrollControlProps
     checkScrollPosition();
     updatePosition();
 
-    // Add scroll listener (to detect if bottom is reached)
-    container.addEventListener('scroll', checkScrollPosition);
+    // Throttled scroll listener via rAF (passive to avoid blocking scroll)
+    let scrollRafId: number | null = null;
+    const handleScroll = () => {
+      if (scrollRafId !== null) return;
+      scrollRafId = requestAnimationFrame(() => {
+        scrollRafId = null;
+        checkScrollPosition();
+      });
+    };
+    container.addEventListener('scroll', handleScroll, { passive: true });
 
     // Add wheel listener (to detect scroll direction)
     container.addEventListener('wheel', handleWheel, { passive: true });
@@ -177,9 +185,10 @@ export const ScrollControl = ({ containerRef, inputAreaRef }: ScrollControlProps
     }
 
     return () => {
-      container.removeEventListener('scroll', checkScrollPosition);
+      container.removeEventListener('scroll', handleScroll);
       container.removeEventListener('wheel', handleWheel);
       window.removeEventListener('resize', handleResize);
+      if (scrollRafId !== null) cancelAnimationFrame(scrollRafId);
       if (resizeObserver) {
         resizeObserver.disconnect();
       }
@@ -191,10 +200,13 @@ export const ScrollControl = ({ containerRef, inputAreaRef }: ScrollControlProps
 
   if (!visible) return null;
 
+  const buttonStyle: React.CSSProperties = { bottom: `${bottomOffset}px` };
+  const svgStyle: React.CSSProperties = { transform: direction === 'up' ? 'rotate(180deg)' : 'none' };
+
   return (
     <button
       className="scroll-control-button"
-      style={{ bottom: `${bottomOffset}px` }}
+      style={buttonStyle}
       onClick={handleClick}
       aria-label={direction === 'up' ? t('chat.backToTop') : t('chat.backToBottom')}
       title={direction === 'up' ? t('chat.backToTop') : t('chat.backToBottom')}
@@ -208,10 +220,10 @@ export const ScrollControl = ({ containerRef, inputAreaRef }: ScrollControlProps
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
-        style={{ transform: direction === 'up' ? 'rotate(180deg)' : 'none' }}
+        style={svgStyle}
       >
         <path d="M12 5v14M19 12l-7 7-7-7" />
       </svg>
     </button>
   );
-};
+});

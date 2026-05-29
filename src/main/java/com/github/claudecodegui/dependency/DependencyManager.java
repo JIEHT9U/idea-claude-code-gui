@@ -1,7 +1,8 @@
 package com.github.claudecodegui.dependency;
 
-import com.github.claudecodegui.bridge.NodeDetector;
 import com.github.claudecodegui.bridge.EnvironmentConfigurator;
+import com.github.claudecodegui.bridge.NodeDetector;
+import com.github.claudecodegui.model.NodeDetectionResult;
 import com.github.claudecodegui.util.PlatformUtils;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -9,14 +10,22 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.intellij.openapi.diagnostic.Logger;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
@@ -36,10 +45,13 @@ public class DependencyManager {
     private final Gson gson;
     private final NodeDetector nodeDetector;
     private final EnvironmentConfigurator envConfigurator;
+    /** Caches resolved WSL npm paths keyed by node path. Populated lazily on first lookup. */
+    private final Map<String, String> wslNpmPathCache = new ConcurrentHashMap<>();
 
     public DependencyManager() {
         this.gson = new GsonBuilder().setPrettyPrinting().create();
-        this.nodeDetector = new NodeDetector();
+        // Use shared NodeDetector instance (singleton pattern)
+        this.nodeDetector = NodeDetector.getInstance();
         this.envConfigurator = new EnvironmentConfigurator();
     }
 
@@ -53,7 +65,7 @@ public class DependencyManager {
      * Returns the root dependencies directory path (~/.codemoss/dependencies/).
      */
     public Path getDependenciesDir() {
-        String home = System.getProperty("user.home");
+        String home = PlatformUtils.getHomeDirectory();
         return Paths.get(home, ".codemoss", DEPS_DIR_NAME);
     }
 
@@ -163,16 +175,15 @@ public class DependencyManager {
             String nodePath = nodeDetector.findNodeExecutable();
             String npmPath = getNpmPath(nodePath);
 
-            ProcessBuilder pb = new ProcessBuilder(
-                npmPath, "view", sdk.getNpmPackage(), "version"
-            );
+            ProcessBuilder pb = new ProcessBuilder(buildNpmCommand(
+                    nodePath, npmPath, "view", sdk.getNpmPackage(), "version"));
             configureProcessEnvironment(pb);
 
             Process process = pb.start();
             StringBuilder output = new StringBuilder();
 
             try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     output.append(line.trim());
@@ -192,7 +203,62 @@ public class DependencyManager {
             LOG.warn("[DependencyManager] Failed to get latest version: " + e.getMessage());
         }
 
+        List<String> fallbackVersions = sdk.getFallbackVersions();
+        if (!fallbackVersions.isEmpty()) {
+            return fallbackVersions.get(0);
+        }
+
         return null;
+    }
+
+    public List<String> getAvailableVersions(String sdkId) {
+        SdkDefinition sdk = SdkDefinition.fromId(sdkId);
+        if (sdk == null) {
+            return Collections.emptyList();
+        }
+
+        try {
+            String nodePath = nodeDetector.findNodeExecutable();
+            String npmPath = getNpmPath(nodePath);
+
+            ProcessBuilder pb = new ProcessBuilder(buildNpmCommand(
+                    nodePath, npmPath, "view", sdk.getNpmPackage(), "versions", "--json"));
+            configureProcessEnvironment(pb);
+
+            Process process = pb.start();
+            StringBuilder output = new StringBuilder();
+
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    output.append(line);
+                }
+            }
+
+            boolean finished = process.waitFor(30, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                return Collections.emptyList();
+            }
+
+            if (process.exitValue() != 0) {
+                return Collections.emptyList();
+            }
+
+            return parseVersionList(output.toString());
+        } catch (Exception e) {
+            LOG.warn("[DependencyManager] Failed to get available versions: " + e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    public List<String> getFallbackVersions(String sdkId) {
+        SdkDefinition sdk = SdkDefinition.fromId(sdkId);
+        if (sdk == null) {
+            return Collections.emptyList();
+        }
+        return sdk.getFallbackVersions();
     }
 
     /**
@@ -236,6 +302,13 @@ public class DependencyManager {
      * Installs an SDK (synchronous).
      */
     public InstallResult installSdkSync(String sdkId, Consumer<String> logCallback) {
+        return installSdkSync(sdkId, null, logCallback);
+    }
+
+    /**
+     * Installs an SDK at a requested version (synchronous).
+     */
+    public InstallResult installSdkSync(String sdkId, String requestedVersion, Consumer<String> logCallback) {
         SdkDefinition sdk = SdkDefinition.fromId(sdkId);
         if (sdk == null) {
             return InstallResult.failure(sdkId, "Unknown SDK: " + sdkId, "");
@@ -258,8 +331,8 @@ public class DependencyManager {
                 String version = nodeDetector.verifyNodePath("node");
                 if (version == null) {
                     return InstallResult.failure(sdkId,
-                        "Node.js not found. Please configure Node.js path in Settings > Basic.",
-                        logs.toString());
+                            "Node.js not found. Please configure Node.js path in Settings > Basic.",
+                            logs.toString());
                 }
             }
             log.accept("Using Node.js: " + nodePath);
@@ -275,8 +348,8 @@ public class DependencyManager {
             Path normalizedDepsDir = getDependenciesDir().normalize().toAbsolutePath();
             if (!normalizedSdkDir.startsWith(normalizedDepsDir)) {
                 return InstallResult.failure(sdkId,
-                    "Security error: SDK directory path is outside dependencies directory",
-                    logs.toString());
+                        "Security error: SDK directory path is outside dependencies directory",
+                        logs.toString());
             }
 
             Files.createDirectories(sdkDir);
@@ -302,7 +375,8 @@ public class DependencyManager {
             }
 
             // 5. Run npm install (with retry mechanism)
-            List<String> packages = sdk.getAllPackages();
+            String normalizedRequestedVersion = normalizeRequestedVersion(requestedVersion);
+            List<String> packages = buildPackageSpecs(sdk, normalizedRequestedVersion);
             int maxRetries = 2;
             InstallResult lastResult = null;
 
@@ -312,9 +386,16 @@ public class DependencyManager {
                 }
 
                 log.accept("Running npm install...");
+                boolean isWsl = NodeDetector.isWslPath(nodePath);
+                Path prefixDir = isWsl
+                        ? Paths.get(NodeDetector.convertToWslPath(normalizedSdkDir.toString()))
+                        : normalizedSdkDir;
                 List<String> command = NpmPermissionHelper.buildInstallCommandWithFallback(
-                    npmPath, normalizedSdkDir, packages, attempt
+                        npmPath, prefixDir, packages, attempt
                 );
+                if (isWsl) {
+                    command.add(0, "wsl");
+                }
                 log.accept("Command: " + String.join(" ", command));
 
                 ProcessBuilder pb = new ProcessBuilder(command);
@@ -339,7 +420,7 @@ public class DependencyManager {
                 if (!finished) {
                     process.destroyForcibly();
                     lastResult = InstallResult.failure(sdkId,
-                        "Installation timed out (3 minutes)", logs.toString());
+                            "Installation timed out (3 minutes)", logs.toString());
                     continue; // Retry
                 }
 
@@ -352,21 +433,21 @@ public class DependencyManager {
                 // Installation failed, record the result
                 String logsStr = logs.toString();
                 lastResult = InstallResult.failure(sdkId,
-                    "npm install failed with exit code: " + exitCode, logsStr);
+                        "npm install failed with exit code: " + exitCode, logsStr);
 
                 // If this is the last attempt, do not retry
                 if (attempt == maxRetries) {
                     // Append troubleshooting suggestions
                     String solution = NpmPermissionHelper.generateErrorSolution(logsStr);
                     return InstallResult.failure(sdkId,
-                        lastResult.getErrorMessage() + solution,
-                        lastResult.getLogs());
+                            lastResult.getErrorMessage() + solution,
+                            lastResult.getLogs());
                 }
 
                 // Detect error type and attempt to fix
                 boolean fixed = false;
                 if (NpmPermissionHelper.hasPermissionError(logsStr) ||
-                    NpmPermissionHelper.hasCacheError(logsStr)) {
+                            NpmPermissionHelper.hasCacheError(logsStr)) {
 
                     log.accept("⚠️ Detected npm cache/permission error, attempting to fix...");
 
@@ -424,6 +505,7 @@ public class DependencyManager {
 
     /**
      * Uninstalls an SDK.
+     *
      * @return true if the uninstallation completed fully, false if some files failed to delete
      */
     public boolean uninstallSdk(String sdkId) {
@@ -445,7 +527,7 @@ public class DependencyManager {
             } else {
                 // Some files failed to delete; log a warning but still return success (manifest is already updated)
                 LOG.warn("[DependencyManager] Uninstalled SDK with " + failedPaths.size() +
-                    " files failed to delete: " + sdkId);
+                                 " files failed to delete: " + sdkId);
                 return true; // Still return true because the SDK is functionally uninstalled
             }
         } catch (Exception e) {
@@ -489,13 +571,27 @@ public class DependencyManager {
      */
     public boolean checkNodeEnvironment() {
         try {
-            String nodePath = nodeDetector.findNodeExecutable();
+            String cachedPath = this.nodeDetector.getCachedNodePath();
+            String cachedVersion = this.nodeDetector.getCachedNodeVersion();
+            if (cachedPath != null && cachedVersion != null) {
+                return true;
+            }
+
+            String nodePath = this.nodeDetector.findNodeExecutable();
             if (nodePath == null) {
                 return false;
             }
 
-            String version = nodeDetector.verifyNodePath(nodePath);
-            return version != null;
+            // findNodeExecutable() already verifies and caches on successful detection.
+            // Only re-verify for the "node" fallback case where detection failed.
+            NodeDetectionResult cached = this.nodeDetector.getCachedDetectionResult();
+            if (cached != null && cached.isFound()) {
+                return true;
+            }
+
+            // Fallback case: verify and cache in a single call (avoids double process spawn).
+            NodeDetectionResult fallbackResult = this.nodeDetector.verifyAndCacheNodePath(nodePath);
+            return fallbackResult.isFound();
         } catch (Exception e) {
             LOG.warn("[DependencyManager] Node.js environment check failed: " + e.getMessage());
             return false;
@@ -508,6 +604,10 @@ public class DependencyManager {
      * Resolves the npm path based on the node path.
      */
     private String getNpmPath(String nodePath) {
+        if (NodeDetector.isWslPath(nodePath)) {
+            return resolveWslNpmPath(nodePath);
+        }
+
         String npmName = PlatformUtils.isWindows() ? "npm.cmd" : "npm";
 
         // 1. Try to find npm in the same directory as Node.js
@@ -538,6 +638,75 @@ public class DependencyManager {
 
         // 3. Fall back to the bare command name (usually works on Unix)
         return PlatformUtils.isWindows() ? npmName : "npm";
+    }
+
+    /**
+     * Resolves the npm path for a WSL node executable.
+     * <p>Resolution order (with the first success being cached for the session):
+     * <ol>
+     *   <li>{@code wsl which npm} — authoritative; works with nvm, Volta, and any
+     *       version manager that puts npm on the WSL user's {@code PATH}.</li>
+     *   <li>Co-located heuristic — assume {@code <nodeDir>/npm} (correct for official
+     *       installs and most nvm setups).</li>
+     *   <li>Bare {@code "npm"} — last resort; depends on WSL's {@code PATH}.</li>
+     * </ol>
+     */
+    private String resolveWslNpmPath(String nodePath) {
+        String cached = wslNpmPathCache.get(nodePath);
+        if (cached != null) {
+            return cached;
+        }
+        String resolved = queryWslWhichNpm();
+        if (resolved == null) {
+            int lastSlash = nodePath.lastIndexOf('/');
+            resolved = (lastSlash > 0) ? nodePath.substring(0, lastSlash) + "/npm" : "npm";
+            LOG.info("[DependencyManager] `wsl which npm` did not resolve npm; "
+                    + "falling back to co-located heuristic: " + resolved
+                    + " (Volta or non-standard layouts may need a custom node path)");
+        } else {
+            LOG.info("[DependencyManager] Resolved WSL npm via `wsl which npm`: " + resolved);
+        }
+        wslNpmPathCache.put(nodePath, resolved);
+        return resolved;
+    }
+
+    /**
+     * Executes {@code wsl which npm} once and returns the trimmed first stdout line, or null on failure.
+     */
+    private static String queryWslWhichNpm() {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("wsl", "which", "npm");
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+            String line;
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                line = reader.readLine();
+            }
+            if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return null;
+            }
+            if (process.exitValue() == 0 && line != null && !line.trim().isEmpty()) {
+                return line.trim();
+            }
+        } catch (Exception e) {
+            LOG.debug("[DependencyManager] `wsl which npm` failed: " + e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Builds an npm command list, prepending {@code "wsl"} when {@code nodePath} is a WSL path.
+     */
+    private static List<String> buildNpmCommand(String nodePath, String npmPath, String... args) {
+        List<String> command = new ArrayList<>();
+        if (NodeDetector.isWslPath(nodePath)) {
+            command.add("wsl");
+        }
+        command.add(npmPath);
+        Collections.addAll(command, args);
+        return command;
     }
 
     /**
@@ -619,6 +788,7 @@ public class DependencyManager {
 
     /**
      * Recursively deletes a directory.
+     *
      * @return a list of paths that failed to delete (empty list means complete success)
      */
     private List<Path> deleteDirectory(Path dir) throws IOException {
@@ -630,15 +800,15 @@ public class DependencyManager {
 
         // Collect all paths that failed to delete instead of silently ignoring them
         Files.walk(dir)
-            .sorted((a, b) -> b.compareTo(a)) // Reverse sort to delete children first
-            .forEach(path -> {
-                try {
-                    Files.delete(path);
-                } catch (IOException e) {
-                    LOG.warn("[DependencyManager] Failed to delete: " + path + " - " + e.getMessage());
-                    failedPaths.add(path);
-                }
-            });
+                .sorted((a, b) -> b.compareTo(a)) // Reverse sort to delete children first
+                .forEach(path -> {
+                    try {
+                        Files.delete(path);
+                    } catch (IOException e) {
+                        LOG.warn("[DependencyManager] Failed to delete: " + path + " - " + e.getMessage());
+                        failedPaths.add(path);
+                    }
+                });
 
         if (!failedPaths.isEmpty()) {
             LOG.warn("[DependencyManager] " + failedPaths.size() + " files/directories failed to delete");
@@ -649,6 +819,7 @@ public class DependencyManager {
 
     /**
      * Compares two version strings.
+     *
      * @return negative if v1 < v2, 0 if equal, positive if v1 > v2
      */
     private int compareVersions(String v1, String v2) {
@@ -674,6 +845,77 @@ public class DependencyManager {
         }
 
         return 0;
+    }
+
+    /**
+     * Semver-like pattern: major.minor.patch with optional pre-release suffix.
+     * Only allows digits, dots, hyphens, and alphanumeric pre-release tags.
+     * Rejects anything that could be used for npm install argument injection.
+     */
+    private static final java.util.regex.Pattern SEMVER_PATTERN =
+            java.util.regex.Pattern.compile("^\\d+\\.\\d+\\.\\d+([-.][a-zA-Z0-9.]+)*$");
+
+    static String normalizeRequestedVersion(String version) {
+        if (version == null) {
+            return null;
+        }
+
+        String trimmed = version.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+
+        if (trimmed.startsWith("v") || trimmed.startsWith("V")) {
+            trimmed = trimmed.substring(1);
+        }
+
+        if (!SEMVER_PATTERN.matcher(trimmed).matches()) {
+            LOG.warn("[DependencyManager] Rejected invalid version format: " + version);
+            return null;
+        }
+
+        return trimmed;
+    }
+
+    static List<String> buildPackageSpecs(SdkDefinition sdk, String requestedVersion) {
+        if (sdk == null) {
+            return Collections.emptyList();
+        }
+
+        List<String> packages = new ArrayList<>();
+        String normalizedRequestedVersion = normalizeRequestedVersion(requestedVersion);
+        String targetVersion = normalizedRequestedVersion != null ? normalizedRequestedVersion : sdk.getVersion();
+        packages.add(sdk.getNpmPackage() + "@" + targetVersion);
+        packages.addAll(sdk.getDependencies());
+        return packages;
+    }
+
+    private List<String> parseVersionList(String rawJson) {
+        List<String> versions = new ArrayList<>();
+
+        try {
+            com.google.gson.JsonElement element = JsonParser.parseString(rawJson);
+            if (!element.isJsonArray()) {
+                return versions;
+            }
+
+            for (com.google.gson.JsonElement item : element.getAsJsonArray()) {
+                if (!item.isJsonPrimitive()) {
+                    continue;
+                }
+
+                String version = normalizeRequestedVersion(item.getAsString());
+                if (version == null || version.contains("-")) {
+                    continue;
+                }
+                versions.add(version);
+            }
+        } catch (Exception e) {
+            LOG.warn("[DependencyManager] Failed to parse version list: " + e.getMessage());
+        }
+
+        versions.sort((left, right) -> compareVersions(right, left));
+        return versions;
     }
 
     /**

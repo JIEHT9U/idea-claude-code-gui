@@ -1,9 +1,11 @@
 package com.github.claudecodegui.session;
 
+import com.github.claudecodegui.session.ClaudeSession.Message;
+import com.github.claudecodegui.handler.SettingsHandler;
+import com.github.claudecodegui.notifications.ClaudeNotifier;
 import com.github.claudecodegui.provider.common.MessageCallback;
 import com.github.claudecodegui.provider.common.SDKResult;
-import com.github.claudecodegui.ClaudeSession.Message;
-import com.github.claudecodegui.notifications.ClaudeNotifier;
+import com.github.claudecodegui.util.TokenUsageUtils;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -20,12 +22,12 @@ import java.util.List;
  */
 public class ClaudeMessageHandler implements MessageCallback {
     private static final Logger LOG = Logger.getInstance(ClaudeMessageHandler.class);
-
     private final Project project;
     private final SessionState state;
     private final CallbackHandler callbackHandler;
     private final MessageParser messageParser;
     private final MessageMerger messageMerger;
+    private final ReplayDeduplicator replayDedup = new ReplayDeduplicator();
     private final Gson gson;
 
     // Content accumulator for the current assistant message
@@ -37,25 +39,31 @@ public class ClaudeMessageHandler implements MessageCallback {
     // Whether the AI is currently in thinking mode
     private boolean isThinking = false;
 
-    // Streaming state tracking
-    private boolean isStreaming = false;
+    // Streaming state tracking — volatile because these fields are written on the SDK
+    // callback thread and read on EDT. Visibility is guaranteed by volatile; atomicity
+    // is not required because each field is independently read/written (no compound ops).
+    // EDT reads happen inside invokeLater() Runnables submitted after the write.
+    private volatile boolean isStreaming = false;
 
-    private boolean streamEndedThisTurn = false;
+    private volatile boolean streamEndedThisTurn = false;
+    private volatile boolean errorReportedThisTurn = false;
+    private volatile String lastReportedError = null;
 
-    // Streaming segment state (used to split text/thinking around tool calls)
-    private boolean textSegmentActive = false;
-    private boolean thinkingSegmentActive = false;
+    // Streaming segment state (used to split text/thinking around tool calls).
+    // Written on SDK callback thread, read on EDT via invokeLater() happens-before.
+    private volatile boolean textSegmentActive = false;
+    private volatile boolean thinkingSegmentActive = false;
 
     /**
      * Constructor.
      */
     public ClaudeMessageHandler(
-        Project project,
-        SessionState state,
-        CallbackHandler callbackHandler,
-        MessageParser messageParser,
-        MessageMerger messageMerger,
-        Gson gson
+            Project project,
+            SessionState state,
+            CallbackHandler callbackHandler,
+            MessageParser messageParser,
+            MessageMerger messageMerger,
+            Gson gson
     ) {
         this.project = project;
         this.state = state;
@@ -112,6 +120,9 @@ public class ClaudeMessageHandler implements MessageCallback {
             case "result":
                 handleResult(content);
                 break;
+            case "usage":
+                handleUsage(content);
+                break;
             case "slash_commands":
                 handleSlashCommands(content);
                 break;
@@ -130,7 +141,26 @@ public class ClaudeMessageHandler implements MessageCallback {
      */
     @Override
     public void onError(String error) {
+        if (errorReportedThisTurn && error != null && error.equals(lastReportedError)) {
+            LOG.debug("Suppressing duplicate error for current Claude turn");
+            return;
+        }
+
+        boolean wasStreaming = isStreaming;
+        isStreaming = false;
         streamEndedThisTurn = false;
+        errorReportedThisTurn = true;
+        lastReportedError = error;
+        textSegmentActive = false;
+        thinkingSegmentActive = false;
+        replayDedup.reset();
+
+        // Reset thinking state if still active — same as onComplete() and handleStreamEnd()
+        if (isThinking) {
+            isThinking = false;
+            callbackHandler.notifyThinkingStatusChanged(false);
+        }
+
         state.setError(error);
         state.setBusy(false);
         state.setLoading(false);
@@ -138,6 +168,9 @@ public class ClaudeMessageHandler implements MessageCallback {
         Message errorMessage = new Message(Message.Type.ERROR, error);
         state.addMessage(errorMessage);
         callbackHandler.notifyMessageUpdate(state.getMessages());
+        if (wasStreaming) {
+            callbackHandler.notifyStreamEnd();
+        }
         callbackHandler.notifyStateChange(state.isBusy(), state.isLoading(), state.getError());
 
         // Show error in status bar
@@ -151,11 +184,49 @@ public class ClaudeMessageHandler implements MessageCallback {
     public void onComplete(SDKResult result) {
         if (streamEndedThisTurn) {
             streamEndedThisTurn = false;
+            errorReportedThisTurn = false;
+            lastReportedError = null;
+            // Safety net: ensure loading state is cleared even when stream_end
+            // was received normally.  handleStreamEnd() already calls
+            // notifyStateChange, but the async JCEF chain may drop it.
+            // This redundant call is harmless (idempotent) and prevents the UI
+            // from getting stuck in "responding" state.
+            state.setBusy(false);
+            state.setLoading(false);
+            callbackHandler.notifyStateChange(state.isBusy(), state.isLoading(), state.getError());
             return;
         }
+
+        // If streaming was active but [STREAM_END] was never received (e.g., SDK error,
+        // timeout, or process interruption), we must explicitly end the stream here.
+        // Without this, the StreamMessageCoalescer remains in streamActive=true state,
+        // which causes SessionCallbackAdapter.onStateChange() to suppress showLoading(false),
+        // leaving the UI stuck in "responding" state forever.
+        // This mirrors the same pattern used in onError() above.
+        boolean wasStreaming = isStreaming;
+        isStreaming = false;
+        textSegmentActive = false;
+        thinkingSegmentActive = false;
+        replayDedup.reset();
+
+        // Reset thinking state if still active
+        if (isThinking) {
+            isThinking = false;
+            callbackHandler.notifyThinkingStatusChanged(false);
+        }
+
+        errorReportedThisTurn = false;
+        lastReportedError = null;
         state.setBusy(false);
         state.setLoading(false);
         state.updateLastModifiedTime();
+
+        if (wasStreaming) {
+            LOG.warn("onComplete called without prior stream_end — forcing stream cleanup");
+            callbackHandler.notifyMessageUpdate(state.getMessages());
+            callbackHandler.notifyStreamEnd();
+        }
+
         callbackHandler.notifyStateChange(state.isBusy(), state.isLoading(), state.getError());
     }
 
@@ -173,6 +244,8 @@ public class ClaudeMessageHandler implements MessageCallback {
             // Parse the complete JSON message
             JsonObject messageJson = gson.fromJson(content, JsonObject.class);
             JsonObject previousRaw = currentAssistantMessage != null ? currentAssistantMessage.raw : null;
+            String previousAssistantContent = assistantContent.toString();
+            String previousThinkingContent = ReplayDeduplicator.extractThinkingContent(previousRaw);
             JsonObject mergedRaw = messageMerger.mergeAssistantMessage(previousRaw, messageJson);
 
             if (currentAssistantMessage == null) {
@@ -186,19 +259,35 @@ public class ClaudeMessageHandler implements MessageCallback {
             //   (tool call messages typically don't contain text)
             // Non-streaming mode: rebuild content from the full message text
             String aggregatedText = messageParser.extractMessageContent(mergedRaw);
+            String streamingText = ReplayDeduplicator.extractTextContent(mergedRaw);
             if (!isStreaming) {
                 assistantContent.setLength(0);
                 if (aggregatedText != null) {
                     assistantContent.append(aggregatedText);
                 }
                 currentAssistantMessage.content = assistantContent.toString();
-            } else if (aggregatedText != null && aggregatedText.length() > assistantContent.length()) {
+                replayDedup.reset();
+            } else if (streamingText.length() > assistantContent.length()) {
                 // Conservative sync: if full text is longer, update accumulator (prevents delta loss edge cases)
                 assistantContent.setLength(0);
-                assistantContent.append(aggregatedText);
+                assistantContent.append(streamingText);
                 currentAssistantMessage.content = assistantContent.toString();
+                replayDedup.beginContentReplay(streamingText, ReplayDeduplicator.replayOffset(previousAssistantContent.length(), replayDedup.contentOffset()));
             }
             currentAssistantMessage.raw = mergedRaw;
+
+            if (isStreaming) {
+                String mergedThinkingContent = ReplayDeduplicator.extractThinkingContent(mergedRaw);
+                if (mergedThinkingContent.length() > previousThinkingContent.length()) {
+                    replayDedup.beginThinkingReplay(
+                            mergedThinkingContent,
+                            ReplayDeduplicator.replayOffset(previousThinkingContent.length(), replayDedup.thinkingOffset())
+                    );
+                }
+                ReplayDeduplicator.SegmentActivity seg = ReplayDeduplicator.syncSegmentActivity(mergedRaw);
+                textSegmentActive = seg.textActive;
+                thinkingSegmentActive = seg.thinkingActive;
+            }
 
             // Streaming: check if the message contains tool calls
             // If tool_use is present, we need to update messages even in streaming mode to render tool blocks
@@ -220,18 +309,45 @@ public class ClaudeMessageHandler implements MessageCallback {
 
             // Tool calls act as segment boundaries: subsequent text/thinking should go into new blocks
             if (hasToolUse) {
-                textSegmentActive = false;
-                thinkingSegmentActive = false;
+                ReplayDeduplicator.SegmentActivity toolSeg = ReplayDeduplicator.syncSegmentActivity(mergedRaw);
+                textSegmentActive = toolSeg.textActive;
+                thinkingSegmentActive = toolSeg.thinkingActive;
             }
 
-            // Streaming: skip full message update in streaming mode unless there is a tool call
-            if (!isStreaming || hasToolUse) {
-                callbackHandler.notifyMessageUpdate(state.getMessages());
-                if (hasToolUse) {
-                    LOG.debug("Streaming active but tool_use detected, sending message update");
+            // Assistant messages carry structural changes (tool_use blocks, thinking
+            // blocks, segment boundaries). Unlike text deltas these MUST be pushed to
+            // the frontend so tool cards and collapsible thinking sections render.
+            callbackHandler.notifyMessageUpdate(state.getMessages());
+
+            // Update status bar with usage from the final assistant message (matches CLI's PP1 behavior).
+            // This ensures the displayed value matches what resume shows from JSONL history.
+            // The assistant message's usage field is the authoritative final value.
+            //
+            // IMPORTANT: This update MUST happen in BOTH streaming and non-streaming modes:
+            // - In streaming mode: [USAGE] tags provide intermediate updates for real-time feedback,
+            //   but the assistant message's usage is the authoritative final value that must overwrite
+            //   any intermediate values to ensure consistency with JSONL history and CLI behavior.
+            // - In non-streaming mode: This is the primary path to update token usage.
+            //
+            // DO NOT add !isStreaming check here - it was previously introduced in commit 03640408
+            // and caused incorrect token display in streaming mode (see commit history for details).
+            //
+            // NOTE (v0.4.1+): In streaming text-only turns the ai-bridge layer suppresses [MESSAGE]
+            // emission (stream-event-processor.shouldOutputMessage returns false when no tool_use
+            // blocks are present), so this branch is NOT reached for those turns. In that case
+            // [USAGE] tags emitted by emitUsageTag() in persistent-query-service.executeTurn become
+            // the only authoritative source — handled by handleUsage(). Do not move the [USAGE]
+            // emission behind shouldOutputMessage without re-routing this final-usage update.
+            if (mergedRaw.has("message") && mergedRaw.get("message").isJsonObject()) {
+                JsonObject messageObj = mergedRaw.getAsJsonObject("message");
+                if (messageObj.has("usage") && messageObj.get("usage").isJsonObject()) {
+                    JsonObject usage = messageObj.getAsJsonObject("usage");
+                    int usedTokens = TokenUsageUtils.extractUsedTokens(usage, state.getProvider());
+                    int maxTokens = SettingsHandler.getModelContextLimit(state.getModel());
+                    ClaudeNotifier.setTokenUsage(project, usedTokens, maxTokens);
+                    callbackHandler.notifyUsageUpdate(usedTokens, maxTokens);
+                    LOG.debug("Updated token usage from assistant message: " + usedTokens);
                 }
-            } else {
-                LOG.debug("Streaming active, skipping full message update in handleAssistantMessage");
             }
         } catch (Exception e) {
             LOG.warn("Failed to parse assistant message JSON: " + e.getMessage());
@@ -299,15 +415,30 @@ public class ClaudeMessageHandler implements MessageCallback {
         // Content output means the current thinking segment has ended
         thinkingSegmentActive = false;
 
+        String novelContent = replayDedup.consumeContentDelta(content);
+        if (novelContent.isEmpty()) {
+            LOG.debug("Skipping replayed content delta (len=" + content.length() + ")");
+            return;
+        }
+
         // Accumulate content for the final message
-        assistantContent.append(content);
+        assistantContent.append(novelContent);
 
         ensureCurrentAssistantMessageExists();
         currentAssistantMessage.content = assistantContent.toString();
-        applyTextDeltaToRaw(content);
+        applyTextDeltaToRaw(novelContent);
         textSegmentActive = true;
 
-        callbackHandler.notifyContentDelta(content);
+        callbackHandler.notifyContentDelta(novelContent);
+        // During streaming, skip the full message update: the delta channel
+        // (onContentDelta at 33ms) provides real-time character-by-character
+        // display via .content, and pushing large JSON payloads through JCEF
+        // would block the renderer and stall the delta channel.
+        //
+        // After streaming ends (isStreaming=false), we MUST still notify
+        // message updates.  Deltas can arrive after handleStreamEnd has
+        // fired — without this call the frontend never receives them and
+        // the last assistant message appears incomplete.
         if (!isStreaming) {
             callbackHandler.notifyMessageUpdate(state.getMessages());
         }
@@ -352,21 +483,32 @@ public class ClaudeMessageHandler implements MessageCallback {
                 return;
             }
 
-            // Find the last user message and update its raw field with the uuid
-            List<Message> messages = state.getMessages();
+            String userText = messageParser.extractMessageContent(userMsg);
+            if (userText == null || userText.isEmpty()) {
+                LOG.debug("User message from SDK has no text content, skipping uuid patch");
+                return;
+            }
+
+            // Find the latest unresolved matching user message and patch its uuid.
+            List<Message> messages = state.getMessagesReference();
             for (int i = messages.size() - 1; i >= 0; i--) {
                 Message msg = messages.get(i);
-                if (msg.type == Message.Type.USER && msg.raw != null) {
-                    // Check if this message already has a uuid
-                    if (!msg.raw.has("uuid")) {
-                        // Update the raw field with the uuid
-                        msg.raw.addProperty("uuid", uuid);
-                        LOG.info("Updated user message with uuid: " + uuid);
-                        // Notify frontend of the update
-                        callbackHandler.notifyMessageUpdate(messages);
-                        break;
-                    }
+                if (msg.type != Message.Type.USER) {
+                    continue;
                 }
+                if (!userText.equals(msg.content)) {
+                    continue;
+                }
+                if (msg.raw == null) {
+                    msg.raw = new JsonObject();
+                }
+                if (msg.raw.has("uuid") && !msg.raw.get("uuid").isJsonNull()) {
+                    continue;
+                }
+                msg.raw.addProperty("uuid", uuid);
+                LOG.info("Updated user message with uuid: " + uuid);
+                callbackHandler.notifyUserMessageUuidPatched(msg.content != null ? msg.content : "", uuid);
+                break;
             }
         } catch (Exception e) {
             LOG.warn("Failed to parse user message from SDK: " + e.getMessage());
@@ -384,8 +526,8 @@ public class ClaudeMessageHandler implements MessageCallback {
         try {
             JsonObject toolResultBlock = gson.fromJson(content, JsonObject.class);
             String toolUseId = toolResultBlock.has("tool_use_id")
-                ? toolResultBlock.get("tool_use_id").getAsString()
-                : null;
+                    ? toolResultBlock.get("tool_use_id").getAsString()
+                    : null;
 
             if (toolUseId != null) {
                 // Build a user message containing the tool_result
@@ -430,59 +572,36 @@ public class ClaudeMessageHandler implements MessageCallback {
     }
 
     /**
-     * Handle the result message containing usage statistics.
+     * Handle the result message as a fallback for non-streaming mode.
+     * In streaming mode, usage is updated via handleUsage() from [USAGE] tags.
+     * In non-streaming mode, [USAGE] tags may not be emitted, so result.usage
+     * serves as the fallback data source to ensure token usage is displayed.
      */
     private void handleResult(String content) {
-        if (!content.startsWith("{")) {
+        if (content == null || !content.startsWith("{")) {
+            LOG.debug("Result message received (non-JSON, skipping)");
             return;
         }
-
         try {
             JsonObject resultJson = gson.fromJson(content, JsonObject.class);
             LOG.debug("Result message received");
-
-            // Always update status bar with token usage if available in result
-            if (resultJson.has("usage")) {
-                JsonObject resultUsage = resultJson.getAsJsonObject("usage");
-
-                int inputTokens = resultUsage.has("input_tokens") ? resultUsage.get("input_tokens").getAsInt() : 0;
-                int cacheWriteTokens = resultUsage.has("cache_creation_input_tokens") ? resultUsage.get("cache_creation_input_tokens").getAsInt() : 0;
-                int cacheReadTokens = resultUsage.has("cache_read_input_tokens") ? resultUsage.get("cache_read_input_tokens").getAsInt() : 0;
-                int outputTokens = resultUsage.has("output_tokens") ? resultUsage.get("output_tokens").getAsInt() : 0;
-
-                // Context consumption: excludes cache read tokens (cache reads don't consume new context window)
-                int usedTokens = inputTokens + cacheWriteTokens + outputTokens;
-                int maxTokens = com.github.claudecodegui.handler.SettingsHandler.getModelContextLimit(state.getModel());
-
-                ClaudeNotifier.setTokenUsage(project, usedTokens, maxTokens);
-            }
-
-            // If the current message's raw usage is all zeros, update it with the result's usage
-            if (currentAssistantMessage != null && currentAssistantMessage.raw != null) {
-                JsonObject message = currentAssistantMessage.raw.has("message") && currentAssistantMessage.raw.get("message").isJsonObject()
-                    ? currentAssistantMessage.raw.getAsJsonObject("message")
-                    : null;
-
-                // Check if the current message's usage is all zeros
-                boolean needsUsageUpdate = false;
-                if (message != null && message.has("usage")) {
-                    JsonObject usage = message.getAsJsonObject("usage");
-                    int inputTokens = usage.has("input_tokens") ? usage.get("input_tokens").getAsInt() : 0;
-                    int outputTokens = usage.has("output_tokens") ? usage.get("output_tokens").getAsInt() : 0;
-                    if (inputTokens == 0 && outputTokens == 0) {
-                        needsUsageUpdate = true;
+            // Fallback: only update usage from result if no usage was received via [USAGE] tag or assistant message
+            if (resultJson.has("usage") && resultJson.get("usage").isJsonObject()
+                    && currentAssistantMessage != null && currentAssistantMessage.raw != null) {
+                JsonObject msg = currentAssistantMessage.raw.has("message")
+                        && currentAssistantMessage.raw.get("message").isJsonObject()
+                        ? currentAssistantMessage.raw.getAsJsonObject("message") : null;
+                boolean hasExistingUsage = msg != null && msg.has("usage") && msg.get("usage").isJsonObject();
+                if (!hasExistingUsage) {
+                    JsonObject usageJson = resultJson.getAsJsonObject("usage");
+                    if (msg != null) {
+                        msg.add("usage", usageJson);
                     }
-                } else {
-                    needsUsageUpdate = true;
-                }
-
-                if (needsUsageUpdate && resultJson.has("usage")) {
-                    JsonObject resultUsage = resultJson.getAsJsonObject("usage");
-                    if (message != null) {
-                        message.add("usage", resultUsage);
-                        callbackHandler.notifyMessageUpdate(state.getMessages());
-                        LOG.debug("Updated assistant message usage from result message");
-                    }
+                    int usedTokens = TokenUsageUtils.extractUsedTokens(usageJson, state.getProvider());
+                    int maxTokens = SettingsHandler.getModelContextLimit(state.getModel());
+                    ClaudeNotifier.setTokenUsage(project, usedTokens, maxTokens);
+                    callbackHandler.notifyUsageUpdate(usedTokens, maxTokens);
+                    LOG.debug("Fallback: updated token usage from result message: " + usedTokens);
                 }
             }
         } catch (Exception e) {
@@ -541,8 +660,11 @@ public class ClaudeMessageHandler implements MessageCallback {
         LOG.debug("Stream started");
         isStreaming = true;  // Mark streaming as active
         streamEndedThisTurn = false;
+        errorReportedThisTurn = false;
+        lastReportedError = null;
         textSegmentActive = false;
         thinkingSegmentActive = false;
+        replayDedup.reset();
         callbackHandler.notifyStreamStart();
     }
 
@@ -555,6 +677,22 @@ public class ClaudeMessageHandler implements MessageCallback {
         streamEndedThisTurn = true;
         textSegmentActive = false;
         thinkingSegmentActive = false;
+        replayDedup.reset();
+
+        // Reset thinking state — stream end is the definitive boundary for a turn.
+        // If thinking was active when the stream ended (e.g., extended thinking without
+        // subsequent content), it must be cleared here to prevent the frontend from being
+        // stuck in "thinking" state.
+        if (isThinking) {
+            isThinking = false;
+            callbackHandler.notifyThinkingStatusChanged(false);
+        }
+
+        // Ensure raw blocks are consistent with the accumulated content before sending the final update.
+        // Conservative sync may leave raw text/thinking blocks shorter than assistantContent
+        // if deltas arrived after the sync but before stream end.
+        ensureRawBlocksConsistency();
+
         // After streaming ends, send a final message update to ensure the message list is in sync
         callbackHandler.notifyMessageUpdate(state.getMessages());
         callbackHandler.notifyStreamEnd();
@@ -578,11 +716,22 @@ public class ClaudeMessageHandler implements MessageCallback {
         }
         // Write thinking delta to raw to prevent data loss after stream ends
         ensureCurrentAssistantMessageExists();
-        applyThinkingDeltaToRaw(content);
-        thinkingSegmentActive = true;
-        callbackHandler.notifyThinkingDelta(content);
-        if (!isStreaming) {
+        String novelContent = replayDedup.consumeThinkingDelta(content);
+        if (novelContent.isEmpty()) {
+            LOG.debug("Skipping replayed thinking delta (len=" + content.length() + ")");
+            return;
+        }
+        boolean applied = applyThinkingDeltaToRaw(novelContent);
+        if (applied) {
+            thinkingSegmentActive = true;
+            // CRITICAL: Only notify frontend when delta was actually applied.
+            // Frontend has no dedup and will accumulate, causing duplication.
+            callbackHandler.notifyThinkingDelta(novelContent);
+            // Thinking blocks are structural: the frontend renders them from
+            // raw blocks in collapsible UI sections, so raw must stay in sync.
             callbackHandler.notifyMessageUpdate(state.getMessages());
+        } else {
+            LOG.debug("Skipping duplicate thinking delta (len=" + content.length() + ")");
         }
     }
 
@@ -610,20 +759,20 @@ public class ClaudeMessageHandler implements MessageCallback {
         ensureCurrentAssistantMessageExists();
         JsonObject raw = currentAssistantMessage.raw;
         JsonObject message = raw.has("message") && raw.get("message").isJsonObject()
-            ? raw.getAsJsonObject("message")
-            : new JsonObject();
+                ? raw.getAsJsonObject("message")
+                : new JsonObject();
         JsonArray content = message.has("content") && message.get("content").isJsonArray()
-            ? message.getAsJsonArray("content")
-            : new JsonArray();
+                ? message.getAsJsonArray("content")
+                : new JsonArray();
         message.add("content", content);
         raw.add("message", message);
         currentAssistantMessage.raw = raw;
         return content;
     }
 
-    private void applyTextDeltaToRaw(String delta) {
+    private boolean applyTextDeltaToRaw(String delta) {
         if (delta == null || delta.isEmpty()) {
-            return;
+            return false;
         }
         JsonArray contentArray = ensureAssistantContentArray();
         JsonObject target = null;
@@ -649,14 +798,137 @@ public class ClaudeMessageHandler implements MessageCallback {
         }
 
         String existing = target.has("text") && !target.get("text").isJsonNull()
-            ? target.get("text").getAsString()
-            : "";
+                ? target.get("text").getAsString()
+                : "";
+
         target.addProperty("text", existing + delta);
+        return true;
     }
 
-    private void applyThinkingDeltaToRaw(String delta) {
-        if (delta == null || delta.isEmpty()) {
+    /**
+     * Ensure raw text blocks are consistent with the accumulated assistantContent.
+     * Conservative sync may leave the last raw text block shorter than the actual
+     * streamed content when deltas arrive after the sync. This safety net runs
+     * before the final notifyMessageUpdate to guarantee the frontend receives complete data.
+     *
+     * <p>Since assistantContent accumulates ALL text deltas (concatenation of all text blocks),
+     * we calculate the total length of preceding text blocks and use only the tail portion
+     * of assistantContent to fix the last block. This prevents incorrectly overwriting
+     * the last block with the full concatenated content when multiple text blocks exist.</p>
+     *
+     * <p>Note: Only text blocks are fixed here because assistantContent is the
+     * authoritative accumulator for text. Thinking content has no separate
+     * accumulator — it is written directly to raw blocks — so there is no
+     * external source of truth to compare against.</p>
+     */
+    private void ensureRawBlocksConsistency() {
+        if (this.currentAssistantMessage == null || this.currentAssistantMessage.raw == null) {
             return;
+        }
+        JsonObject raw = this.currentAssistantMessage.raw;
+        JsonObject message = raw.has("message") && raw.get("message").isJsonObject()
+                ? raw.getAsJsonObject("message") : null;
+        if (message == null || !message.has("content") || !message.get("content").isJsonArray()) {
+            return;
+        }
+        JsonArray contentArray = message.getAsJsonArray("content");
+
+        String accumulatedText = this.assistantContent.toString();
+        if (accumulatedText.isEmpty()) {
+            return;
+        }
+
+        // Find the last text block and calculate total text length from all preceding text blocks.
+        // We need this because assistantContent is the concatenation of ALL text deltas,
+        // but each text block should only contain its respective portion.
+        JsonObject lastTextBlock = null;
+        int precedingTextLength = 0;
+        for (int i = 0; i < contentArray.size(); i++) {
+            if (!contentArray.get(i).isJsonObject()) {
+                continue;
+            }
+            JsonObject block = contentArray.get(i).getAsJsonObject();
+            String blockType = block.has("type") && !block.get("type").isJsonNull()
+                    ? block.get("type").getAsString() : "";
+            if ("text".equals(blockType)) {
+                lastTextBlock = block;
+                precedingTextLength += block.has("text") && !block.get("text").isJsonNull()
+                        ? block.get("text").getAsString().length() : 0;
+            }
+        }
+
+        // The last iteration added the last block's length to precedingTextLength,
+        // so subtract it to get the actual preceding length.
+        if (lastTextBlock != null) {
+            String lastBlockText = lastTextBlock.has("text") && !lastTextBlock.get("text").isJsonNull()
+                    ? lastTextBlock.get("text").getAsString() : "";
+            precedingTextLength -= lastBlockText.length();
+
+            // Invariant: assistantContent must cover all preceding text blocks.
+            // A violation indicates raw blocks and the accumulator drifted, which is
+            // worth surfacing for diagnosis rather than silently producing an empty tail.
+            if (accumulatedText.length() < precedingTextLength) {
+                LOG.warn("ensureRawBlocksConsistency: accumulatedText (" + accumulatedText.length()
+                        + ") shorter than precedingTextLength (" + precedingTextLength
+                        + "); raw blocks may be out of sync with assistantContent");
+                return;
+            }
+
+            // The expected content for the last block is the tail of assistantContent
+            // starting from the end of all preceding text blocks.
+            String expectedLastBlockText = accumulatedText.substring(precedingTextLength);
+            if (lastBlockText.length() < expectedLastBlockText.length()) {
+                lastTextBlock.addProperty("text", expectedLastBlockText);
+            }
+        }
+    }
+
+    /**
+     * Handle usage data from the [USAGE] tag emitted by ai-bridge during streaming.
+     */
+    private void handleUsage(String content) {
+        if (content == null || content.isEmpty() || !content.startsWith("{")) { return; }
+        try {
+            JsonObject usageJson = gson.fromJson(content, JsonObject.class);
+            int usedTokens = TokenUsageUtils.extractUsedTokens(usageJson, state.getProvider());
+            int maxTokens = SettingsHandler.getModelContextLimit(state.getModel());
+            ClaudeNotifier.setTokenUsage(project, usedTokens, maxTokens);
+            // Notify webview of usage update
+            callbackHandler.notifyUsageUpdate(usedTokens, maxTokens);
+            // Ensure assistant message exists before backfilling usage
+            ensureCurrentAssistantMessageExists();
+            backfillUsageToAssistantMessage(usageJson);
+            LOG.debug("Updated token usage from [USAGE] tag: " + usedTokens);
+        } catch (Exception e) {
+            LOG.warn("Failed to parse usage data: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Backfill usage data into the current assistant message's raw JSON.
+     * Always updates during streaming to capture accumulating usage data.
+     *
+     * IMPORTANT: This method does NOT perform monotonic increase checks.
+     * - The assistant message's final usage value (from handleAssistantMessage) is the authoritative
+     *   value that will overwrite any intermediate values from [USAGE] tags.
+     * - Monotonic checks were previously added in commit 03640408 but removed because they prevented
+     *   the authoritative final value from being applied when messages arrive out of order.
+     * - Allowing overwrites ensures consistency with JSONL history and CLI behavior.
+     */
+    private void backfillUsageToAssistantMessage(JsonObject usageJson) {
+        if (currentAssistantMessage == null || currentAssistantMessage.raw == null) { return; }
+        JsonObject message = currentAssistantMessage.raw.has("message") && currentAssistantMessage.raw.get("message").isJsonObject()
+                ? currentAssistantMessage.raw.getAsJsonObject("message") : null;
+        if (message == null) { return; }
+
+        // Always update usage during streaming to capture accumulating values
+        message.add("usage", usageJson);
+        LOG.debug("Updated assistant message usage from [USAGE] tag");
+    }
+
+    private boolean applyThinkingDeltaToRaw(String delta) {
+        if (delta == null || delta.isEmpty()) {
+            return false;
         }
         JsonArray contentArray = ensureAssistantContentArray();
         JsonObject target = null;
@@ -682,8 +954,10 @@ public class ClaudeMessageHandler implements MessageCallback {
         }
 
         String existing = target.has("thinking") && !target.get("thinking").isJsonNull()
-            ? target.get("thinking").getAsString()
-            : "";
+                ? target.get("thinking").getAsString()
+                : "";
+
         target.addProperty("thinking", existing + delta);
+        return true;
     }
 }

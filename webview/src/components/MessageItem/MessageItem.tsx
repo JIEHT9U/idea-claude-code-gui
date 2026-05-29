@@ -3,6 +3,9 @@ import type { TFunction } from 'i18next';
 import type { ClaudeMessage, ClaudeContentBlock, ToolResultBlock } from '../../types';
 
 import MarkdownBlock from '../MarkdownBlock';
+import { ProviderNotConfiguredCard, isProviderNotConfiguredError } from './ProviderNotConfiguredCard';
+import { ErrorDiagnosticCard } from './ErrorDiagnosticCard';
+import { matchErrorPattern } from '../../utils/errorMatcher';
 import {
   EditToolBlock,
   EditToolGroupBlock,
@@ -20,6 +23,7 @@ import { READ_TOOL_NAMES, EDIT_TOOL_NAMES, BASH_TOOL_NAMES, SEARCH_TOOL_NAMES, i
 export interface MessageItemProps {
   message: ClaudeMessage;
   messageIndex: number;
+  messageKey: string;
   isLast: boolean;
   streamingActive: boolean;
   isThinking: boolean;
@@ -28,6 +32,18 @@ export interface MessageItemProps {
   getContentBlocks: (message: ClaudeMessage) => ClaudeContentBlock[];
   findToolResult: (toolId: string | undefined, messageIndex: number) => ToolResultBlock | null | undefined;
   extractMarkdownContent: (message: ClaudeMessage) => string;
+  onNodeRef?: (id: string, node: HTMLDivElement | null) => void;
+  onNavigateToProviderSettings?: () => void;
+  onNavigateToDependencySettings?: () => void;
+  toolResultSignature?: string;
+  /** Current active provider id (e.g. 'claude', 'codex'); drives the streaming-connect label. */
+  currentProvider?: string;
+}
+
+/** Map provider id to a human-readable label used in UI text. */
+function getProviderDisplayName(providerId?: string): string {
+  if (providerId === 'codex') return 'Codex';
+  return 'Claude';
 }
 
 type GroupedBlock =
@@ -75,6 +91,17 @@ const CopyButton = memo(function CopyButton({
     </button>
   );
 });
+
+function formatDurationMs(durationMs: number): string {
+  const seconds = Math.max(0, Math.floor(durationMs / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
+  }
+  return `${minutes}:${String(remainder).padStart(2, '0')}`;
+}
 
 function isToolBlockOfType(block: ClaudeContentBlock, toolNames: Set<string>): boolean {
   return block.type === 'tool_use' && isToolName(block.name, toolNames);
@@ -192,6 +219,7 @@ function groupBlocks(blocks: ClaudeContentBlock[]): GroupedBlock[] {
 export const MessageItem = memo(function MessageItem({
   message,
   messageIndex,
+  messageKey,
   isLast,
   streamingActive,
   isThinking,
@@ -200,6 +228,11 @@ export const MessageItem = memo(function MessageItem({
   getContentBlocks,
   findToolResult,
   extractMarkdownContent,
+  onNodeRef,
+  onNavigateToProviderSettings,
+  onNavigateToDependencySettings,
+  toolResultSignature: _toolResultSignature,
+  currentProvider,
 }: MessageItemProps): React.ReactElement {
   const [copiedMessageIndex, setCopiedMessageIndex] = useState<number | null>(null);
   const [showStreamingConnectHint, setShowStreamingConnectHint] = useState(false);
@@ -209,12 +242,22 @@ export const MessageItem = memo(function MessageItem({
 
   // Manage thinking expansion state locally to avoid prop drilling and unnecessary re-renders
   const [expandedThinking, setExpandedThinking] = useState<Record<number, boolean>>({});
+  // Track which thinking blocks were manually expanded by the user
+  const [manuallyExpandedThinking, setManuallyExpandedThinking] = useState<Record<number, boolean>>({});
 
   const toggleThinking = useCallback((blockIndex: number) => {
-    setExpandedThinking((prev) => ({
-      ...prev,
-      [blockIndex]: !prev[blockIndex],
-    }));
+    setExpandedThinking((prev) => {
+      const newExpanded = !prev[blockIndex];
+      // Mark this block as manually toggled by the user
+      setManuallyExpandedThinking((manualPrev) => ({
+        ...manualPrev,
+        [blockIndex]: newExpanded,
+      }));
+      return {
+        ...prev,
+        [blockIndex]: newExpanded,
+      };
+    });
   }, []);
 
   const isThinkingExpanded = useCallback(
@@ -233,10 +276,11 @@ export const MessageItem = memo(function MessageItem({
     }
     return '';
   }, [message, extractMarkdownContent]);
+  const hasCopyableText = markdownContent.trim().length > 0;
 
   const handleCopyMessage = useCallback(async () => {
     // Prevent copying if message is empty or already in "copied" state
-    if (!markdownContent.trim() || copiedMessageIndex === messageIndex) return;
+    if (!hasCopyableText || copiedMessageIndex === messageIndex) return;
 
     const success = await copyToClipboard(markdownContent);
     if (success) {
@@ -253,7 +297,7 @@ export const MessageItem = memo(function MessageItem({
         copyTimeoutRef.current = null;
       }, 1500);
     }
-  }, [markdownContent, messageIndex, copiedMessageIndex]);
+  }, [hasCopyableText, markdownContent, messageIndex, copiedMessageIndex]);
 
   // Cleanup timeout on unmount to prevent memory leaks
   useEffect(() => {
@@ -300,33 +344,71 @@ export const MessageItem = memo(function MessageItem({
     if (lastThinkingIndex !== lastAutoExpandedIndexRef.current) {
       setExpandedThinking((prev) => {
         const newState = { ...prev };
-        // Collapse all thinking blocks
+        // Only collapse thinking blocks that were NOT manually expanded by the user
         thinkingIndices.forEach((idx) => {
-          newState[idx] = false;
+          // Preserve manually expanded state
+          if (!manuallyExpandedThinking[idx]) {
+            newState[idx] = false;
+          }
         });
-        // Expand the latest one
-        newState[lastThinkingIndex] = true;
+        // Auto-expand the latest one (unless user manually collapsed it)
+        if (!manuallyExpandedThinking[lastThinkingIndex] || prev[lastThinkingIndex] === undefined) {
+          newState[lastThinkingIndex] = true;
+        }
         return newState;
       });
       lastAutoExpandedIndexRef.current = lastThinkingIndex;
     }
-  }, [blocks, isMessageStreaming]);
+  }, [blocks, isMessageStreaming, manuallyExpandedThinking]);
 
   const groupedBlocks = useMemo(() => groupBlocks(blocks), [blocks]);
-  const messageStyle = useMemo(
-    () => ({ contentVisibility: 'auto', containIntrinsicSize: '0 320px' } as const),
-    []
+
+  // Register user message DOM node for anchor navigation
+  // Must be called before any early returns to satisfy React hooks rules
+  const anchorRefCallback = useCallback((node: HTMLDivElement | null) => {
+    if (message.type === 'user' && onNodeRef) {
+      onNodeRef(messageKey, node);
+    }
+  }, [message.type, messageKey, onNodeRef]);
+
+  const isProviderNotConfigured = message.type === 'error' && isProviderNotConfiguredError(getMessageText(message));
+  const errorDiagnosticPattern = useMemo(
+    () => (message.type === 'error' && !isProviderNotConfigured
+      ? matchErrorPattern(getMessageText(message))
+      : null),
+    [message, isProviderNotConfigured, getMessageText]
   );
 
   const renderGroupedBlocks = () => {
     if (message.type === 'error') {
-      return <MarkdownBlock content={getMessageText(message)} />;
+      if (isProviderNotConfigured) {
+        return (
+          <ProviderNotConfiguredCard
+            t={t}
+            onNavigateToSettings={onNavigateToProviderSettings}
+          />
+        );
+      }
+      return (
+        <>
+          <MarkdownBlock content={getMessageText(message)} />
+          {errorDiagnosticPattern && (
+            <ErrorDiagnosticCard
+              t={t}
+              pattern={errorDiagnosticPattern}
+              onNavigateToDependencySettings={onNavigateToDependencySettings}
+            />
+          )}
+        </>
+      );
     }
 
     if (isEmptyStreamingPlaceholder) {
       return (
         <div className="streaming-connect-status">
-          <span className="streaming-connect-text">{t('chat.streamingConnected')}</span>
+          <span className="streaming-connect-text">
+            {t('chat.streamingConnected', { provider: getProviderDisplayName(currentProvider) })}
+          </span>
         </div>
       );
     }
@@ -339,13 +421,18 @@ export const MessageItem = memo(function MessageItem({
             name: block.name,
             input: block.input,
             result: findToolResult(block.id, messageIndex),
+            toolId: block.id,
           };
         });
 
         if (readItems.length === 1) {
           return (
             <div key={`${messageIndex}-readgroup-${grouped.startIndex}`} className="content-block">
-              <ReadToolBlock input={readItems[0].input} />
+              <ReadToolBlock
+                input={readItems[0].input}
+                result={readItems[0].result}
+                toolId={readItems[0].toolId}
+              />
             </div>
           );
         }
@@ -481,25 +568,31 @@ export const MessageItem = memo(function MessageItem({
   }
 
   return (
-    <div className={`message ${message.type}`} style={messageStyle}>
+    <div
+      className={`message ${message.type}${isLast ? ' is-last-message' : ''}${isProviderNotConfigured ? ' provider-not-configured' : ''}`}
+      ref={anchorRefCallback}
+      data-message-anchor-id={message.type === 'user' ? messageKey : undefined}
+    >
       {/* Timestamp and copy button for user messages */}
       {message.type === 'user' && message.timestamp && (
         <div className="message-header-row">
           <div className="message-timestamp-header">
             {formatTime(message.timestamp)}
           </div>
-          <CopyButton
-            className="message-copy-btn-inline"
-            isCopied={copiedMessageIndex === messageIndex}
-            onClick={handleCopyMessage}
-            copyLabel={t('markdown.copyMessage')}
-            copySuccessText={t('markdown.copySuccess')}
-          />
+          {hasCopyableText && (
+            <CopyButton
+              className="message-copy-btn-inline"
+              isCopied={copiedMessageIndex === messageIndex}
+              onClick={handleCopyMessage}
+              copyLabel={t('markdown.copyMessage')}
+              copySuccessText={t('markdown.copySuccess')}
+            />
+          )}
         </div>
       )}
 
       {/* Copy button for assistant messages only */}
-      {message.type === 'assistant' && !isMessageStreaming && (
+      {message.type === 'assistant' && !isMessageStreaming && hasCopyableText && (
         <CopyButton
           isCopied={copiedMessageIndex === messageIndex}
           onClick={handleCopyMessage}
@@ -508,8 +601,9 @@ export const MessageItem = memo(function MessageItem({
         />
       )}
 
-      {/* Role label for non-user/assistant messages */}
-      {message.type !== 'assistant' && message.type !== 'user' && (
+      {/* Role label for non-user/assistant messages — hidden for notification types */}
+      {message.type !== 'assistant' && message.type !== 'user'
+        && message.type !== 'notification' && message.type !== 'task_notification' && (
         <div className="message-role-label">
           {message.type}
         </div>
@@ -518,6 +612,17 @@ export const MessageItem = memo(function MessageItem({
       <div className="message-content">
         {renderGroupedBlocks()}
       </div>
+
+      {/* Duration display after last assistant message */}
+      {message.type === 'assistant' && !isMessageStreaming && typeof message.durationMs === 'number' && (
+        <div className="message-duration">
+          <span className="message-duration-inner">
+            <span className="message-duration-flag codicon codicon-clock"></span>
+            <span className="message-duration-cost">{t('chat.totalDuration')}</span>
+            <span className="message-duration-value">{formatDurationMs(message.durationMs)}</span>
+          </span>
+        </div>
+      )}
     </div>
   );
 });

@@ -1,17 +1,18 @@
 package com.github.claudecodegui.settings;
 
+import com.github.claudecodegui.util.PlatformUtils;
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.google.gson.JsonArray;
 import com.intellij.openapi.diagnostic.Logger;
-
-import com.google.gson.JsonElement;
 
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -29,11 +30,11 @@ public class ClaudeSettingsManager {
      * and are always preserved from the existing configuration.
      */
     private static final Set<String> PROTECTED_SYSTEM_FIELDS = Set.of(
-        "mcpServers",           // MCP server configuration
-        "disabledMcpServers",   // Disabled MCP servers
-        "plugins",              // Skills/Plugins configuration
-        "trustedDirectories",   // Trusted directories
-        "trustedFiles"          // Trusted files
+            "mcpServers",           // MCP server configuration
+            "disabledMcpServers",   // Disabled MCP servers
+            "plugins",              // Skills/Plugins configuration
+            "trustedDirectories",   // Trusted directories
+            "trustedFiles"          // Trusted files
     );
 
     /**
@@ -41,15 +42,15 @@ public class ClaudeSettingsManager {
      * All other user-customized fields are preserved.
      */
     private static final Set<String> PROVIDER_MANAGED_FIELDS = Set.of(
-        "env",                      // Environment variables
-        "model",                    // Model selection
-        "alwaysThinkingEnabled",    // Thinking mode
-        "codemossProviderId",       // Codemoss provider identifier
-        "ccSwitchProviderId",       // CC-Switch provider identifier
-        "maxContextLengthTokens",   // Maximum context length
-        "temperature",              // Temperature parameter
-        "topP",                     // Top-P parameter
-        "topK"                      // Top-K parameter
+            "env",                      // Environment variables
+            "model",                    // Model selection
+            "alwaysThinkingEnabled",    // Thinking mode
+            "codemossProviderId",       // Codemoss provider identifier
+            "ccSwitchProviderId",       // CC-Switch provider identifier
+            "maxContextLengthTokens",   // Maximum context length
+            "temperature",              // Temperature parameter
+            "topP",                     // Top-P parameter
+            "topK"                      // Top-K parameter
     );
 
     private final Gson gson;
@@ -80,11 +81,33 @@ public class ClaudeSettingsManager {
             return createDefaultClaudeSettings();
         }
 
-        try (FileReader reader = new FileReader(settingsFile)) {
+        try (FileReader reader = new FileReader(settingsFile, StandardCharsets.UTF_8)) {
             return JsonParser.parseReader(reader).getAsJsonObject();
         } catch (Exception e) {
             LOG.warn("[ClaudeSettingsManager] Failed to read ~/.claude/settings.json: " + e.getMessage());
             return createDefaultClaudeSettings();
+        }
+    }
+
+    /**
+     * Read managed settings from the platform-specific managed-settings.json.
+     * Returns null if the file does not exist or cannot be parsed.
+     */
+    public JsonObject readManagedSettings() {
+        try {
+            Path managedPath = pathManager.getManagedSettingsPath();
+            File managedFile = managedPath.toFile();
+
+            if (!managedFile.exists()) {
+                return null;
+            }
+
+            try (FileReader reader = new FileReader(managedFile)) {
+                return JsonParser.parseReader(reader).getAsJsonObject();
+            }
+        } catch (Exception e) {
+            LOG.debug("[ClaudeSettingsManager] Failed to read managed-settings.json: " + e.getMessage());
+            return null;
         }
     }
 
@@ -106,7 +129,7 @@ public class ClaudeSettingsManager {
         // Force-set to string value "1"
         env.addProperty("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1");
 
-        try (FileWriter writer = new FileWriter(settingsPath.toFile())) {
+        try (FileWriter writer = new FileWriter(settingsPath.toFile(), StandardCharsets.UTF_8)) {
             gson.toJson(settings, writer);
             LOG.info("[ClaudeSettingsManager] Synced settings to: " + settingsPath);
         }
@@ -118,7 +141,7 @@ public class ClaudeSettingsManager {
      */
     public void syncMcpToClaudeSettings() throws IOException {
         try {
-            String homeDir = System.getProperty("user.home");
+            String homeDir = PlatformUtils.getHomeDirectory();
 
             // Read ~/.claude.json
             Path claudeJsonPath = Paths.get(homeDir, ".claude.json");
@@ -130,7 +153,7 @@ public class ClaudeSettingsManager {
             }
 
             JsonObject claudeJson;
-            try (FileReader reader = new FileReader(claudeJsonFile)) {
+            try (FileReader reader = new FileReader(claudeJsonFile, StandardCharsets.UTF_8)) {
                 claudeJson = JsonParser.parseReader(reader).getAsJsonObject();
             } catch (Exception e) {
                 LOG.error("[ClaudeSettingsManager] Failed to parse ~/.claude.json: " + e.getMessage(), e);
@@ -158,7 +181,7 @@ public class ClaudeSettingsManager {
                 settings.add("disabledMcpServers", claudeJson.get("disabledMcpServers"));
                 JsonArray disabledServers = claudeJson.getAsJsonArray("disabledMcpServers");
                 LOG.info("[ClaudeSettingsManager] Synced " + disabledServers.size()
-                    + " disabled MCP servers to settings.json");
+                                 + " disabled MCP servers to settings.json");
             }
 
             // Write back to settings.json
@@ -169,6 +192,96 @@ public class ClaudeSettingsManager {
             LOG.error("[ClaudeSettingsManager] Failed to sync MCP to Claude settings: " + e.getMessage(), e);
             throw new IOException("Failed to sync MCP settings", e);
         }
+    }
+
+    /**
+     * Apply CLI login mode.
+     *
+     * Historical behavior (REMOVED): this method used to write CCGUI_CLI_LOGIN_AUTHORIZED=1
+     * AND DELETE the user's ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN from
+     * ~/.claude/settings.json so that the Claude SDK would fall through to its native
+     * OAuth flow. That destructively wiped user-configured keys with no recovery path.
+     *
+     * Current behavior: this is a no-op. The single source of truth for CLI login mode
+     * is the plugin-owned ~/.codemoss/config.json (claude.current === "__cli_login__").
+     * The Node.js bridge reads that file via getClaudeRuntimeState() in api-config.js
+     * and clears process.env.ANTHROPIC_API_KEY at runtime — without ever touching
+     * the user's ~/.claude/settings.json.
+     *
+     * Kept as a no-op (rather than deleted) to preserve the call site in
+     * ClaudeProviderOperations.handleSwitchProvider for future hooks if needed.
+     */
+    public void applyCliLoginToClaudeSettings() throws IOException {
+        LOG.info("[ClaudeSettingsManager] Switched to CLI login mode (settings.json untouched, API keys preserved)");
+    }
+
+    /**
+     * Read OAuth account info from ~/.claude.json for UI display.
+     * Only extracts safe display fields (email, name), never credentials or tokens.
+     * @return JsonObject with filtered account info, or null if not available
+     */
+    public JsonObject readCliLoginAccountInfo() {
+        try {
+            String homeDir = PlatformUtils.getHomeDirectory();
+            Path claudeJsonPath = Paths.get(homeDir, ".claude.json");
+            File claudeJsonFile = claudeJsonPath.toFile();
+
+            if (!claudeJsonFile.exists()) {
+                return null;
+            }
+
+            try (FileReader reader = new FileReader(claudeJsonFile, StandardCharsets.UTF_8)) {
+                JsonObject claudeJson = JsonParser.parseReader(reader).getAsJsonObject();
+                if (claudeJson.has("oauthAccount") && !claudeJson.get("oauthAccount").isJsonNull()) {
+                    JsonObject oauthAccount = claudeJson.getAsJsonObject("oauthAccount");
+                    // Only extract safe display fields - never pass the full object
+                    JsonObject safeInfo = new JsonObject();
+                    if (oauthAccount.has("emailAddress")) {
+                        safeInfo.addProperty("emailAddress", oauthAccount.get("emailAddress").getAsString());
+                    }
+                    if (oauthAccount.has("name")) {
+                        safeInfo.addProperty("name", oauthAccount.get("name").getAsString());
+                    }
+                    return safeInfo;
+                }
+            }
+        } catch (Exception e) {
+            LOG.debug("[ClaudeSettingsManager] Failed to read CLI login account info: " + e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Remove the legacy CCGUI_CLI_LOGIN_AUTHORIZED flag from settings.json if present.
+     *
+     * This flag is no longer written by the plugin (CLI login mode is tracked in
+     * ~/.codemoss/config.json), but earlier versions did write it. This method cleans
+     * up that residue when users switch away from CLI login mode, so the flag does
+     * not leak into other auth flows.
+     */
+    public void removeCliLoginFromClaudeSettings() throws IOException {
+        JsonObject settings = readClaudeSettings();
+
+        if (settings.has("env") && !settings.get("env").isJsonNull()) {
+            JsonObject env = settings.getAsJsonObject("env");
+            if (env.has("CCGUI_CLI_LOGIN_AUTHORIZED")) {
+                env.remove("CCGUI_CLI_LOGIN_AUTHORIZED");
+                writeClaudeSettings(settings);
+                LOG.info("[ClaudeSettingsManager] Removed CLI login authorization flag from settings.json");
+            }
+        }
+    }
+
+    /**
+     * Detect apiKeyHelper in user settings or managed settings.
+     * @return true if apiKeyHelper is configured, false otherwise
+     */
+    private boolean hasApiKeyHelper(JsonObject claudeSettings) {
+        if (claudeSettings.has("apiKeyHelper") && !claudeSettings.get("apiKeyHelper").isJsonNull()) {
+            return true;
+        }
+        JsonObject managedSettings = readManagedSettings();
+        return managedSettings != null && managedSettings.has("apiKeyHelper") && !managedSettings.get("apiKeyHelper").isJsonNull();
     }
 
     /**
@@ -197,12 +310,28 @@ public class ClaudeSettingsManager {
 
             String baseUrl = env.has("ANTHROPIC_BASE_URL") ? env.get("ANTHROPIC_BASE_URL").getAsString() : "";
 
-            result.addProperty("apiKey", apiKey);
+            // Check for CLI login authorization
+            if (apiKey.isEmpty() && "none".equals(authType) &&
+                    env.has("CCGUI_CLI_LOGIN_AUTHORIZED") &&
+                    "1".equals(env.get("CCGUI_CLI_LOGIN_AUTHORIZED").getAsString())) {
+                authType = "cli_login";
+            }
+
+            // If no API key found, check for apiKeyHelper in user settings or managed settings
+            if (apiKey.isEmpty() && "none".equals(authType) && hasApiKeyHelper(claudeSettings)) {
+                authType = "api_key_helper";
+            }
+
+            // Mask credentials – never expose full API keys to the webview.
+            // Show only a safe prefix/suffix so the user can identify the key.
+            result.addProperty("apiKey", maskCredential(apiKey));
             result.addProperty("authType", authType);  // Add auth type identifier
             result.addProperty("baseUrl", baseUrl);
         } else {
+            // No env object — still check for apiKeyHelper
+            String authType = hasApiKeyHelper(claudeSettings) ? "api_key_helper" : "none";
             result.addProperty("apiKey", "");
-            result.addProperty("authType", "none");
+            result.addProperty("authType", authType);
             result.addProperty("baseUrl", "");
         }
 
@@ -213,6 +342,21 @@ public class ClaudeSettingsManager {
         }
 
         return result;
+    }
+
+    /**
+     * Mask a credential string for safe display.
+     * Shows the first 4 and last 4 characters with asterisks in between.
+     * Returns empty string for null/empty input.
+     */
+    private static String maskCredential(String credential) {
+        if (credential == null || credential.isEmpty()) {
+            return "";
+        }
+        if (credential.length() <= 8) {
+            return "****";
+        }
+        return credential.substring(0, 4) + "****" + credential.substring(credential.length() - 4);
     }
 
     /**

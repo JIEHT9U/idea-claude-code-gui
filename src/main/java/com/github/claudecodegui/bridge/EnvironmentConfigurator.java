@@ -1,8 +1,9 @@
 package com.github.claudecodegui.bridge;
 
-import com.intellij.openapi.diagnostic.Logger;
+import com.github.claudecodegui.settings.CodemossSettingsService;
 import com.github.claudecodegui.util.PlatformUtils;
 import com.github.claudecodegui.util.ShellExecutor;
+import com.intellij.openapi.diagnostic.Logger;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -29,73 +30,96 @@ public class EnvironmentConfigurator {
     private static final Logger LOG = Logger.getInstance(EnvironmentConfigurator.class);
     private static final String CLAUDE_PERMISSION_ENV = "CLAUDE_PERMISSION_DIR";
     private static final String CLAUDE_SESSION_ID_ENV = "CLAUDE_SESSION_ID";
+    private static final String CLAUDE_PERMISSION_SAFETY_NET_ENV = "CLAUDE_PERMISSION_SAFETY_NET_MS";
     private static final String CODEX_HOME_ENV = "CODEX_HOME";
 
+    private final CodemossSettingsService settingsService;
     private volatile String cachedPermissionDir = null;
     private volatile String sessionId = null;
 
     // Cache for Codex env_key values from config.toml
     private volatile Map<String, String> cachedCodexEnvVars = null;
 
+    public EnvironmentConfigurator() {
+        this(new CodemossSettingsService());
+    }
+
+    EnvironmentConfigurator(CodemossSettingsService settingsService) {
+        this.settingsService = settingsService;
+    }
+
     /**
      * Updates the process environment variables, ensuring PATH includes the Node.js directory.
      * Supports both Windows (Path) and Unix (PATH) naming conventions.
+     * The configured Node.js directory is prepended to PATH with highest priority.
      */
     public void updateProcessEnvironment(ProcessBuilder pb, String nodeExecutable) {
         Map<String, String> env = pb.environment();
 
         // Use PlatformUtils to get the PATH variable (case-insensitive)
         String path = PlatformUtils.isWindows() ?
-            PlatformUtils.getEnvIgnoreCase("PATH") :
-            env.get("PATH");
+                              PlatformUtils.getEnvIgnoreCase("PATH") :
+                              env.get("PATH");
 
         if (path == null) {
             path = "";
         }
 
-        StringBuilder newPath = new StringBuilder(path);
+        StringBuilder newPath = new StringBuilder();
         String separator = File.pathSeparator;
 
-        // 1. Add the directory containing Node.js
+        // 1. Prepend the directory containing Node.js with highest priority
+        //    Remove it from existing PATH first to avoid duplicates
         if (nodeExecutable != null && !nodeExecutable.equals("node")) {
             File nodeFile = new File(nodeExecutable);
             String nodeDir = nodeFile.getParent();
-            if (nodeDir != null && !pathContains(path, nodeDir)) {
-                newPath.append(separator).append(nodeDir);
+            if (nodeDir != null) {
+                // Remove existing nodeDir from PATH to avoid duplicates
+                String cleanedPath = removePathEntry(path, nodeDir);
+                // Prepend nodeDir at the beginning for highest priority
+                newPath.append(nodeDir);
+                if (!cleanedPath.isEmpty()) {
+                    newPath.append(separator).append(cleanedPath);
+                }
+            } else {
+                newPath.append(path);
             }
+        } else {
+            newPath.append(path);
         }
 
-        // 2. Add common paths based on the platform
+        // 2. Add common paths based on the platform (append to the end)
+        String currentPath = newPath.toString();
         if (PlatformUtils.isWindows()) {
             // Common Windows paths
             String[] windowsPaths = {
-                System.getenv("ProgramFiles") + "\\nodejs",
-                System.getenv("APPDATA") + "\\npm",
-                System.getenv("LOCALAPPDATA") + "\\Programs\\nodejs"
+                    System.getenv("ProgramFiles") + "\\nodejs",
+                    System.getenv("APPDATA") + "\\npm",
+                    System.getenv("LOCALAPPDATA") + "\\Programs\\nodejs"
             };
             for (String p : windowsPaths) {
-                if (p != null && !p.contains("null") && !pathContains(path, p)) {
+                if (!p.contains("null") && !pathContains(currentPath, p)) {
                     newPath.append(separator).append(p);
                 }
             }
         } else {
             // Common macOS/Linux paths
-            String userHome = System.getProperty("user.home");
+            String userHome = PlatformUtils.getHomeDirectory();
             String[] unixPaths = {
-                "/usr/local/bin",
-                "/opt/homebrew/bin",
-                "/usr/bin",
-                "/bin",
-                "/usr/sbin",
-                "/sbin",
-                userHome + "/.nvm/current/bin",
-                // Python / uv / pip tool installation directory (uvx, uv, etc.)
-                userHome + "/.local/bin",
-                // Rust / cargo tool installation directory
-                userHome + "/.cargo/bin",
+                    "/usr/local/bin",
+                    "/opt/homebrew/bin",
+                    "/usr/bin",
+                    "/bin",
+                    "/usr/sbin",
+                    "/sbin",
+                    userHome + "/.nvm/current/bin",
+                    // Python / uv / pip tool installation directory (uvx, uv, etc.)
+                    userHome + "/.local/bin",
+                    // Rust / cargo tool installation directory
+                    userHome + "/.cargo/bin",
             };
             for (String p : unixPaths) {
-                if (!pathContains(path, p)) {
+                if (!pathContains(currentPath, p)) {
                     newPath.append(separator).append(p);
                 }
             }
@@ -120,7 +144,7 @@ public class EnvironmentConfigurator {
         // The SDK needs HOME to locate the ~/.claude/commands/ directory
         String home = env.get("HOME");
         if (home == null || home.isEmpty()) {
-            home = System.getProperty("user.home");
+            home = PlatformUtils.getHomeDirectory();
             if (home != null && !home.isEmpty()) {
                 env.put("HOME", home);
             }
@@ -130,7 +154,7 @@ public class EnvironmentConfigurator {
         // Environment variables may be missing when launched from macOS GUI; relying on implicit defaults causes unstable feature detection (e.g. skills tool appearing intermittently)
         String codexHome = env.get(CODEX_HOME_ENV);
         if (codexHome == null || codexHome.trim().isEmpty()) {
-            String userHome = System.getProperty("user.home");
+            String userHome = PlatformUtils.getHomeDirectory();
             if (userHome != null && !userHome.isEmpty()) {
                 env.put(CODEX_HOME_ENV, Paths.get(userHome, ".codex").toString());
             }
@@ -148,16 +172,30 @@ public class EnvironmentConfigurator {
         }
         String permissionDir = getPermissionDirectory();
         if (permissionDir != null) {
-            env.putIfAbsent(CLAUDE_PERMISSION_ENV, permissionDir);
+            env.put(CLAUDE_PERMISSION_ENV, permissionDir);
         }
         String sid = getSessionId();
         if (sid != null) {
-            env.putIfAbsent(CLAUDE_SESSION_ID_ENV, sid);
+            env.put(CLAUDE_SESSION_ID_ENV, sid);
+        }
+        env.put(CLAUDE_PERMISSION_SAFETY_NET_ENV, String.valueOf(getPermissionSafetyNetMs()));
+    }
+
+    long getPermissionSafetyNetMs() {
+        try {
+            long timeoutSeconds = settingsService.getPermissionDialogTimeoutSeconds();
+            return (timeoutSeconds + CodemossSettingsService.PERMISSION_SAFETY_NET_BUFFER_SECONDS) * 1000L;
+        } catch (Exception e) {
+            LOG.warn("[EnvironmentConfigurator] Failed to read permission timeout for Node safety net; errorClass="
+                    + e.getClass().getSimpleName());
+            return (CodemossSettingsService.DEFAULT_PERMISSION_DIALOG_TIMEOUT_SECONDS
+                    + CodemossSettingsService.PERMISSION_SAFETY_NET_BUFFER_SECONDS) * 1000L;
         }
     }
 
     /**
      * Get or generate session ID for this instance.
+     *
      * @return Session ID
      */
     public String getSessionId() {
@@ -172,7 +210,28 @@ public class EnvironmentConfigurator {
     }
 
     /**
+     * Explicitly sets the session ID to align permission request routing
+     * across multiple bridge instances.
+     */
+    public void setSessionId(String sessionId) {
+        if (sessionId == null) {
+            return;
+        }
+        String normalized = sessionId.trim();
+        if (normalized.isEmpty()) {
+            return;
+        }
+        this.sessionId = normalized;
+    }
+
+    /**
      * Gets the permission directory path.
+     *
+     * The directory is created with restrictive permissions (POSIX 0700 on Unix-like
+     * filesystems) because it carries permission IPC payloads and tmpdir is shared
+     * across all users on multi-user systems. On Windows / non-POSIX filesystems we
+     * fall back to default permissions: tmpdir on Windows is per-user, and the file
+     * names contain unguessable request IDs, so other-user access is already gated.
      */
     public String getPermissionDirectory() {
         String cached = this.cachedPermissionDir;
@@ -183,11 +242,29 @@ public class EnvironmentConfigurator {
         Path dir = Paths.get(System.getProperty("java.io.tmpdir"), "claude-permission");
         try {
             Files.createDirectories(dir);
+            hardenPermissionDirectory(dir);
         } catch (IOException e) {
             LOG.error("[EnvironmentConfigurator] Failed to prepare permission dir: " + dir + " (" + e.getMessage() + ")");
         }
         cachedPermissionDir = dir.toAbsolutePath().toString();
         return cachedPermissionDir;
+    }
+
+    /**
+     * Tightens the permission-IPC directory to owner-only access on POSIX systems.
+     * Silent no-op on filesystems that don't support POSIX file permissions.
+     */
+    private void hardenPermissionDirectory(Path dir) {
+        try {
+            if (!Files.getFileStore(dir).supportsFileAttributeView(java.nio.file.attribute.PosixFileAttributeView.class)) {
+                return;
+            }
+            Files.setPosixFilePermissions(dir,
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+        } catch (UnsupportedOperationException | IOException ignored) {
+            // Filesystem (e.g. Windows NTFS, FAT32) does not support POSIX perms.
+            // The directory still inherits the user's tmpdir ACL, which is acceptable.
+        }
     }
 
     /**
@@ -202,6 +279,47 @@ public class EnvironmentConfigurator {
             return pathEnv.toLowerCase().contains(targetPath.toLowerCase());
         }
         return pathEnv.contains(targetPath);
+    }
+
+    /**
+     * Removes a specific path entry from the PATH environment variable.
+     * Performs case-insensitive comparison on Windows.
+     *
+     * @param pathEnv    The PATH environment variable value
+     * @param targetPath The path entry to remove
+     * @return PATH with the target entry removed
+     */
+    private String removePathEntry(String pathEnv, String targetPath) {
+        if (pathEnv == null || pathEnv.isEmpty() || targetPath == null || targetPath.isEmpty()) {
+            return pathEnv != null ? pathEnv : "";
+        }
+
+        String separator = File.pathSeparator;
+        String[] entries = pathEnv.split(Pattern.quote(separator));
+        StringBuilder result = new StringBuilder();
+
+        for (String entry : entries) {
+            String trimmedEntry = entry.trim();
+            if (trimmedEntry.isEmpty()) {
+                continue;
+            }
+            // Case-insensitive comparison on Windows, case-sensitive on Unix
+            boolean shouldSkip;
+            if (PlatformUtils.isWindows()) {
+                shouldSkip = trimmedEntry.equalsIgnoreCase(targetPath);
+            } else {
+                shouldSkip = trimmedEntry.equals(targetPath);
+            }
+
+            if (!shouldSkip) {
+                if (result.length() > 0) {
+                    result.append(separator);
+                }
+                result.append(trimmedEntry);
+            }
+        }
+
+        return result.toString();
     }
 
     /**
@@ -252,7 +370,7 @@ public class EnvironmentConfigurator {
      * Configure Codex-specific environment variables.
      * Reads ~/.codex/config.toml to find custom env_key settings and loads those
      * environment variables from the system shell environment.
-     *
+     * <p>
      * This is necessary because IDE processes often don't inherit shell environment
      * variables set in ~/.zshrc or ~/.bash_profile when launched from Dock/launcher.
      *
@@ -264,6 +382,12 @@ public class EnvironmentConfigurator {
         }
 
         try {
+            String accessMode = new CodemossSettingsService().getCodexRuntimeAccessMode();
+            if (CodemossSettingsService.CODEX_RUNTIME_ACCESS_INACTIVE.equals(accessMode)) {
+                LOG.debug("[Codex] Skipping env_key sync from ~/.codex/config.toml: local access is not authorized");
+                return;
+            }
+
             // 1. Find all env_key names from ~/.codex/config.toml
             Set<String> envKeyNames = parseCodexConfigEnvKeys();
             if (envKeyNames.isEmpty()) {
@@ -288,7 +412,7 @@ public class EnvironmentConfigurator {
                     LOG.info("[Codex] Set env var from shell: " + envKeyName + " (length: " + value.length() + ")");
                 } else {
                     LOG.warn("[Codex] Could not resolve env var: " + envKeyName +
-                            ". Please ensure it's set in your shell environment.");
+                                     ". Please ensure it's set in your shell environment.");
                 }
             }
         } catch (Exception e) {
@@ -303,7 +427,7 @@ public class EnvironmentConfigurator {
      */
     private Set<String> parseCodexConfigEnvKeys() {
         Set<String> envKeys = new HashSet<>();
-        String home = System.getProperty("user.home");
+        String home = PlatformUtils.getHomeDirectory();
         if (home == null || home.isEmpty()) {
             return envKeys;
         }
@@ -391,6 +515,46 @@ public class EnvironmentConfigurator {
     }
 
     /**
+     * Allowlist of shells that may be invoked to source the user's login env.
+     * `$SHELL` is read from the process environment which is technically attacker-influenced;
+     * restricting to this set prevents a hostile parent from pointing us at an arbitrary binary
+     * (e.g. a script in /tmp) under the guise of a login shell.
+     */
+    private static final Set<String> ALLOWED_LOGIN_SHELLS = Set.of(
+            "/bin/zsh",
+            "/bin/bash",
+            "/bin/sh",
+            "/usr/bin/zsh",
+            "/usr/bin/bash",
+            "/usr/bin/sh",
+            "/usr/local/bin/zsh",
+            "/usr/local/bin/bash",
+            "/opt/homebrew/bin/zsh",
+            "/opt/homebrew/bin/bash"
+    );
+
+    /**
+     * Resolve a login shell binary to invoke, honoring `$SHELL` only when it points
+     * at an allowlisted executable. Returns {@code null} when no acceptable shell exists.
+     */
+    String resolveLoginShell() {
+        String shell = System.getenv("SHELL");
+        if (shell != null && !shell.isEmpty() && ALLOWED_LOGIN_SHELLS.contains(shell)) {
+            return shell;
+        }
+        if (shell != null && !shell.isEmpty()) {
+            LOG.warn("[Codex] $SHELL=" + shell + " is not in allowlist; falling back to /bin/zsh");
+        }
+        // Prefer zsh (macOS default) then bash; only return a candidate that actually exists.
+        for (String candidate : new String[]{"/bin/zsh", "/bin/bash", "/bin/sh"}) {
+            if (new File(candidate).canExecute()) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Get environment variable by executing a login shell (macOS/Linux).
      * This captures environment variables set in .zshrc, .bash_profile, etc.
      *
@@ -406,9 +570,10 @@ public class EnvironmentConfigurator {
 
         // Use login + interactive shell to get full environment
         // fnm and other version managers require interactive shell to load .zshrc
-        String shell = System.getenv("SHELL");
-        if (shell == null || shell.isEmpty()) {
-            shell = "/bin/zsh"; // Default to zsh on macOS
+        String shell = resolveLoginShell();
+        if (shell == null) {
+            LOG.warn("[Codex] No allowlisted login shell available; skipping env lookup for: " + envName);
+            return null;
         }
 
         List<String> command = new ArrayList<>();
@@ -463,7 +628,7 @@ public class EnvironmentConfigurator {
 
                 // Windows returns "%VARNAME%" if not set
                 if (line != null && !line.trim().isEmpty() &&
-                        !line.trim().equals("%" + envName + "%")) {
+                            !line.trim().equals("%" + envName + "%")) {
                     LOG.debug("[Codex] Env var found via Windows shell: " + envName);
                     return line.trim();
                 }
@@ -482,7 +647,7 @@ public class EnvironmentConfigurator {
      * @return Value or null
      */
     private String parseEnvFromShellConfigs(String envName) {
-        String home = System.getProperty("user.home");
+        String home = PlatformUtils.getHomeDirectory();
         if (home == null || home.isEmpty()) {
             return null;
         }

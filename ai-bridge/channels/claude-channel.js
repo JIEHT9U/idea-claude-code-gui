@@ -5,12 +5,17 @@
 import {
   sendMessage as claudeSendMessage,
   sendMessageWithAttachments as claudeSendMessageWithAttachments,
-  getSlashCommands as claudeGetSlashCommands,
   rewindFiles as claudeRewindFiles,
   getMcpServerStatus as claudeGetMcpServerStatus,
   getMcpServerTools as claudeGetMcpServerTools
 } from '../services/claude/message-service.js';
-import { getSessionMessages as claudeGetSessionMessages } from '../services/claude/session-service.js';
+import {
+  resetRuntimePersistent as claudeResetRuntimePersistent
+} from '../services/claude/persistent-query-service.js';
+import {
+  getSessionMessages as claudeGetSessionMessages,
+  getLatestUserMessage as claudeGetLatestUserMessage
+} from '../services/claude/session-service.js';
 
 /**
  * Execute a Claude specific command.
@@ -23,7 +28,7 @@ export async function handleClaudeCommand(command, args, stdinData) {
     case 'send': {
       if (stdinData && stdinData.message !== undefined) {
         // Include streaming and disableThinking when destructuring
-        const { message, sessionId, cwd, permissionMode, model, openedFiles, agentPrompt, streaming, disableThinking } = stdinData;
+        const { message, sessionId, cwd, permissionMode, model, openedFiles, agentPrompt, streaming, disableThinking, reasoningEffort } = stdinData;
         await claudeSendMessage(
           message,
           sessionId || '',
@@ -33,7 +38,8 @@ export async function handleClaudeCommand(command, args, stdinData) {
           openedFiles || null,
           agentPrompt || null,
           streaming,  // Pass streaming parameter
-          disableThinking || false  // Pass disableThinking parameter
+          disableThinking || false,  // Pass disableThinking parameter
+          reasoningEffort || null  // Pass reasoning effort level
         );
       } else {
         await claudeSendMessage(args[0], args[1], args[2], args[3], args[4]);
@@ -44,14 +50,14 @@ export async function handleClaudeCommand(command, args, stdinData) {
     case 'sendWithAttachments': {
       if (stdinData && stdinData.message !== undefined) {
         // Include streaming when destructuring
-        const { message, sessionId, cwd, permissionMode, model, attachments, openedFiles, agentPrompt, streaming } = stdinData;
+        const { message, sessionId, cwd, permissionMode, model, attachments, openedFiles, agentPrompt, streaming, reasoningEffort } = stdinData;
         await claudeSendMessageWithAttachments(
           message,
           sessionId || '',
           cwd || '',
           permissionMode || '',
           model || '',
-          attachments ? { attachments, openedFiles, agentPrompt, streaming } : { openedFiles, agentPrompt, streaming }
+          attachments ? { attachments, openedFiles, agentPrompt, streaming, reasoningEffort } : { openedFiles, agentPrompt, streaming, reasoningEffort }
         );
       } else {
         await claudeSendMessageWithAttachments(args[0], args[1], args[2], args[3], args[4], stdinData);
@@ -63,11 +69,9 @@ export async function handleClaudeCommand(command, args, stdinData) {
       await claudeGetSessionMessages(args[0], args[1]);
       break;
 
-    case 'getSlashCommands': {
-      const cwd = stdinData?.cwd || args[0] || null;
-      await claudeGetSlashCommands(cwd);
+    case 'getLatestUserMessage':
+      await claudeGetLatestUserMessage(args[0], args[1]);
       break;
-    }
 
     case 'rewindFiles': {
       const sessionId = stdinData?.sessionId || args[0];
@@ -96,11 +100,26 @@ export async function handleClaudeCommand(command, args, stdinData) {
       break;
     }
 
+    case 'resetRuntime': {
+      await claudeResetRuntimePersistent(stdinData || {});
+      break;
+    }
+
+    case 'getContextUsage': {
+      // getContextUsage requires a persistent runtime (daemon mode).
+      // In per-process mode, there is no persistent runtime, so return an error.
+      console.log(JSON.stringify({
+        success: false,
+        error: 'getContextUsage requires daemon mode. No persistent runtime available in per-process mode.'
+      }));
+      break;
+    }
+
     default:
       throw new Error(`Unknown Claude command: ${command}`);
   }
 }
 
 export function getClaudeCommandList() {
-  return ['send', 'sendWithAttachments', 'getSession', 'getSlashCommands', 'rewindFiles', 'getMcpServerStatus', 'getMcpServerTools'];
+  return ['send', 'sendWithAttachments', 'getSession', 'getLatestUserMessage', 'rewindFiles', 'getMcpServerStatus', 'getMcpServerTools', 'resetRuntime', 'getContextUsage'];
 }

@@ -5,122 +5,333 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { platform } from 'os';
-import { execSync } from 'child_process';
-import { getClaudeDir } from '../utils/path-utils.js';
+import { getClaudeDir, getCodemossDir, getManagedSettingsPath } from '../utils/path-utils.js';
+
+// Conditional debug logging: set CLAUDE_DEBUG=1 to enable verbose diagnostics
+const DEBUG = process.env.CLAUDE_DEBUG === '1' || process.env.CLAUDE_DEBUG === 'true';
+function debugLog(...args) {
+  if (DEBUG) {
+    console.log(...args);
+  }
+}
+
+// ============================================================================
+// CLI Client Identity
+// ============================================================================
+// Simulates CLI client identity so the API treats our SDK calls as CLI traffic.
+// The CLI version is resolved dynamically from the installed SDK's manifest.json,
+// which embeds the CLI version that was bundled with the SDK.
+
+const FALLBACK_CLI_VERSION = '2.1.88';
+
+let _cachedCliVersion = null;
 
 /**
- * Read Claude Code configuration.
+ * Resolve CLI version from the installed SDK's manifest.json.
+ * The SDK bundles a manifest.json with ` "version": "<cli-version>" }`.
+ * Falls back to converting the SDK package version (0.x.y -> x.1.y),
+ * then to the hardcoded fallback.
  */
-export function loadClaudeSettings() {
+function resolveCliVersionFromSdk() {
+  if (_cachedCliVersion) return _cachedCliVersion;
+
   try {
-    const settingsPath = join(getClaudeDir(), 'settings.json');
-    const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
-    return settings;
+    const depsBase = join(getCodemossDir(), 'dependencies');
+    const sdkDir = join(depsBase, 'claude-sdk', 'node_modules', '@anthropic-ai', 'claude-agent-sdk');
+
+    // Try manifest.json first (contains the bundled CLI version)
+    const manifestPath = join(sdkDir, 'manifest.json');
+    if (existsSync(manifestPath)) {
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      if (manifest?.version) {
+        _cachedCliVersion = manifest.version;
+        return _cachedCliVersion;
+      }
+    }
+
+    // Fallback: derive from SDK package.json version (0.x.y -> x.1.y)
+    // e.g., SDK 0.2.88 -> CLI 2.1.88
+    const pkgPath = join(sdkDir, 'package.json');
+    if (existsSync(pkgPath)) {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+      if (pkg?.version) {
+        const parts = pkg.version.split('.');
+        if (parts.length >= 3) {
+          _cachedCliVersion = `${parts[1]}.1.${parts[2]}`;
+          return _cachedCliVersion;
+        }
+      }
+    }
+  } catch {
+    // Ignore errors, use fallback
+  }
+
+  _cachedCliVersion = FALLBACK_CLI_VERSION;
+  return _cachedCliVersion;
+}
+
+/**
+ * Get the CLI version for User-Agent header.
+ * Priority: CLAUDE_CLI_VERSION env var > SDK manifest > SDK version conversion > fallback
+ * @returns {string} CLI version string (e.g., "2.1.88")
+ */
+export function getCliVersion() {
+  return process.env.CLAUDE_CLI_VERSION || resolveCliVersionFromSdk();
+}
+
+/**
+ * Build CLI-style User-Agent header value.
+ * Format: claude-cli/{VERSION} ({USER_TYPE}, {ENTRYPOINT})
+ *
+ * Does NOT include agent-sdk version suffix — we simulate a pure CLI client.
+ * @returns {string} User-Agent header value
+ */
+export function getCliUserAgent() {
+  const version = getCliVersion();
+  const userType = process.env.USER_TYPE || 'external';
+  const entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT || 'cli';
+  return `claude-cli/${version} (${userType}, ${entrypoint})`;
+}
+
+/**
+ * Build a clean env object for SDK child processes that identifies as CLI.
+ *
+ * The SDK's query() checks `options.env` — if absent, it copies process.env
+ * (which includes CLAUDE_AGENT_SDK_VERSION set by the SDK itself).
+ * By passing our own env, we control exactly what the child process sees.
+ *
+ * @returns {Object} Environment variables object for options.env
+ */
+export function buildCliEnv() {
+  const env = {
+    ...process.env,
+    CLAUDE_CODE_ENTRYPOINT: 'cli',
+    USER_TYPE: 'external',
+  };
+  delete env.CLAUDE_AGENT_SDK_VERSION;
+  return env;
+}
+
+/**
+ * Configure process.env for CLI client identity at startup.
+ * Sets CLAUDE_CODE_ENTRYPOINT and USER_TYPE, deletes CLAUDE_AGENT_SDK_VERSION.
+ * Call once at process startup before any SDK loading.
+ */
+export function configureCliIdentity() {
+  if (!process.env.CLAUDE_CODE_ENTRYPOINT) {
+    process.env.CLAUDE_CODE_ENTRYPOINT = 'cli';
+  }
+  if (!process.env.USER_TYPE) {
+    process.env.USER_TYPE = 'external';
+  }
+  delete process.env.CLAUDE_AGENT_SDK_VERSION;
+}
+
+// ============================================================================
+// Network Environment Variables
+// ============================================================================
+
+/**
+ * Network-related environment variable names that should be injected from
+ * settings.json into process.env early at startup.
+ *
+ * IDEs launched via desktop launcher don't inherit shell proxy configuration,
+ * so we need to explicitly read and set them from settings.json.
+ *
+ * For corporate SSL-inspection proxies, prefer NODE_EXTRA_CA_CERTS (path to
+ * a PEM bundle) over NODE_TLS_REJECT_UNAUTHORIZED=0 — the former adds custom
+ * CAs while keeping verification intact; the latter disables ALL verification.
+ */
+const NETWORK_ENV_VARS = [
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
+  'http_proxy', 'https_proxy', 'no_proxy',
+  'NODE_EXTRA_CA_CERTS',
+  'NODE_TLS_REJECT_UNAUTHORIZED',
+];
+
+const LOCAL_SETTINGS_PROVIDER_ID = '__local_settings_json__';
+const CLI_LOGIN_PROVIDER_ID = '__cli_login__';
+const CODEX_CLI_LOGIN_PROVIDER_ID = '__codex_cli_login__';
+const injectedNetworkEnvVars = new Map();
+
+function clearInjectedNetworkEnvVars() {
+  for (const [varName, injectedValue] of injectedNetworkEnvVars.entries()) {
+    if (process.env[varName] === injectedValue) {
+      delete process.env[varName];
+    }
+  }
+  injectedNetworkEnvVars.clear();
+}
+
+function clearRuntimeAuthEnv() {
+  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_AUTH_TOKEN;
+  delete process.env.ANTHROPIC_BASE_URL;
+  delete process.env.ANTHROPIC_API_URL;
+}
+
+function readJsonFile(filePath) {
+  try {
+    if (!existsSync(filePath)) {
+      return null;
+    }
+    const raw = readFileSync(filePath, 'utf8');
+    // PowerShell commonly writes UTF-8 with BOM on Windows. Strip the BOM
+    // before parsing so provider state files remain readable across tools.
+    const normalized = raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;
+    return JSON.parse(normalized);
   } catch (error) {
+    debugLog('[DEBUG] Failed to read JSON file:', filePath, error.message);
     return null;
   }
 }
 
+function readClaudeSettingsFromDisk() {
+  return readJsonFile(join(getClaudeDir(), 'settings.json'));
+}
+
+function loadCodemossConfig() {
+  return readJsonFile(join(getCodemossDir(), 'config.json'));
+}
+
+export function getClaudeRuntimeState() {
+  const config = loadCodemossConfig();
+  const claude = config?.claude && typeof config.claude === 'object' ? config.claude : null;
+  const providers = claude?.providers && typeof claude.providers === 'object' ? claude.providers : {};
+  const providerIds = Object.keys(providers);
+  const hasExplicitCurrent = !!claude && Object.prototype.hasOwnProperty.call(claude, 'current') && claude.current !== null;
+  const currentId = hasExplicitCurrent ? String(claude.current).trim() : '';
+
+  if (currentId === LOCAL_SETTINGS_PROVIDER_ID) {
+    return { access: 'local', currentId };
+  }
+
+  if (currentId === CLI_LOGIN_PROVIDER_ID) {
+    return { access: 'cli_login', currentId };
+  }
+
+  if (currentId && Object.prototype.hasOwnProperty.call(providers, currentId)) {
+    return { access: 'managed', currentId };
+  }
+
+  if (!hasExplicitCurrent && providerIds.length > 0) {
+    return { access: 'managed', currentId: providerIds[0] };
+  }
+
+  return { access: 'inactive', currentId };
+}
+
+export function getCodexRuntimeState() {
+  const config = loadCodemossConfig();
+  const codex = config?.codex && typeof config.codex === 'object' ? config.codex : null;
+  const providers = codex?.providers && typeof codex.providers === 'object' ? codex.providers : {};
+  const hasExplicitCurrent = !!codex && Object.prototype.hasOwnProperty.call(codex, 'current') && codex.current !== null;
+  const currentId = hasExplicitCurrent ? String(codex.current).trim() : '';
+
+  if (currentId === CODEX_CLI_LOGIN_PROVIDER_ID) {
+    return { access: 'cli_login', currentId };
+  }
+
+  if (currentId && Object.prototype.hasOwnProperty.call(providers, currentId)) {
+    return { access: 'managed', currentId };
+  }
+
+  return { access: 'inactive', currentId };
+}
+
+function canReadClaudeSettings(runtimeState) {
+  return runtimeState.access !== 'inactive';
+}
+
+function canUseLocalProxySettings(runtimeState) {
+  return runtimeState.access === 'local' || runtimeState.access === 'cli_login';
+}
+
 /**
- * Read credentials from macOS Keychain
- * @returns {Object|null} Credentials object or null if not found
+ * Inject network-related environment variables from settings.json into process.env.
+ *
+ * This includes proxy settings AND TLS configuration. It must be called as early
+ * as possible in every Node.js entry point — before any HTTPS connection is made
+ * (including SDK preloading) — so that authorized Local settings / CLI Login
+ * modes can use corporate proxies and custom CA setups safely.
+ *
+ * Users behind corporate SSL-inspection proxies should prefer setting:
+ *   { "env": { "NODE_EXTRA_CA_CERTS": "/path/to/ca-bundle.pem" } }
+ *
+ * As a last resort (disables ALL TLS verification — MITM risk):
+ *   { "env": { "NODE_TLS_REJECT_UNAUTHORIZED": "0" } }
+ *
+ * @param {Object} [settings] - Parsed settings object. If omitted, loads from disk.
  */
-function readMacKeychainCredentials() {
-  try {
-    // Try different possible keychain service names
-    const serviceNames = ['Claude Code-credentials', 'Claude Code'];
+export function injectNetworkEnvVars(settings) {
+  const runtimeState = getClaudeRuntimeState();
+  clearInjectedNetworkEnvVars();
 
-    for (const serviceName of serviceNames) {
+  if (!canUseLocalProxySettings(runtimeState)) {
+    debugLog('[DEBUG] Skipping local proxy/TLS env sync for provider mode:', runtimeState.access);
+    return;
+  }
+
+  const resolvedSettings = settings || readClaudeSettingsFromDisk();
+  for (const varName of NETWORK_ENV_VARS) {
+    const value = resolvedSettings?.env?.[varName];
+    if (value === undefined || value === null || process.env[varName]) {
+      continue;
+    }
+
+    // Validate proxy URLs before injecting
+    if (['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'].includes(varName)) {
       try {
-        const result = execSync(
-          `security find-generic-password -s "${serviceName}" -w 2>/dev/null`,
-          { encoding: 'utf8', timeout: 5000 }
-        );
-
-        if (result && result.trim()) {
-          const credentials = JSON.parse(result.trim());
-          console.log(`[DEBUG] Successfully read credentials from macOS Keychain (service: ${serviceName})`);
-          return credentials;
-        }
-      } catch (e) {
-        // Continue to next service name
+        new URL(String(value));
+      } catch {
+        debugLog(`[DEBUG] Skipping ${varName}: invalid URL "${value}"`);
         continue;
       }
     }
 
-    console.log('[DEBUG] No credentials found in macOS Keychain');
-    return null;
-  } catch (error) {
-    console.log('[DEBUG] Failed to read from macOS Keychain:', error.message);
-    return null;
+    const stringValue = String(value);
+    process.env[varName] = stringValue;
+    injectedNetworkEnvVars.set(varName, stringValue);
+    debugLog(`[DEBUG] Set ${varName} from settings.json`);
+
+    if (varName === 'NODE_TLS_REJECT_UNAUTHORIZED' && String(value) === '0') {
+      console.warn('[SECURITY WARNING] TLS certificate verification is disabled via settings.json. All HTTPS connections are vulnerable to MITM attacks. Prefer NODE_EXTRA_CA_CERTS for corporate proxies.');
+    }
   }
 }
 
 /**
- * Read credentials from file (Linux/Windows)
- * @returns {Object|null} Credentials object or null if not found
+ * Load managed settings from the platform-specific managed-settings.json.
+ * These are typically configured by enterprise IT administrators.
+ * @returns {Object|null} Parsed managed settings or null if not found/invalid
  */
-function readFileCredentials() {
+export function loadManagedSettings() {
   try {
-    const credentialsPath = join(getClaudeDir(), '.credentials.json');
-
-    if (!existsSync(credentialsPath)) {
-      console.log('[DEBUG] No CLI session found: .credentials.json does not exist');
+    const managedPath = getManagedSettingsPath();
+    if (!existsSync(managedPath)) {
       return null;
     }
-
-    const credentials = JSON.parse(readFileSync(credentialsPath, 'utf8'));
-    console.log('[DEBUG] Successfully read credentials from file');
-    return credentials;
+    const settings = JSON.parse(readFileSync(managedPath, 'utf8'));
+    debugLog('[DEBUG] Loaded managed settings from:', managedPath);
+    return settings;
   } catch (error) {
-    console.log('[DEBUG] Failed to read credentials file:', error.message);
+    debugLog('[DEBUG] Failed to load managed settings:', error.message);
     return null;
   }
 }
 
 /**
- * Check whether a valid Claude CLI session authentication exists.
- * - macOS: Reads credentials from the system Keychain
- * - Linux/Windows: Reads credentials from ~/.claude/.credentials.json
- *
- * @returns {boolean} True if valid CLI session credentials are found, false otherwise
+ * Read Claude Code configuration only when an active Claude provider is authorized.
+ * Managed providers read the plugin-synced settings.json copy; local/CLI modes
+ * read the user's local Claude settings directly.
  */
-export function hasCliSessionAuth() {
-  try {
-    let credentials = null;
-    const currentPlatform = platform();
-
-    // macOS uses Keychain, other platforms use file
-    if (currentPlatform === 'darwin') {
-      console.log('[DEBUG] Detected macOS, attempting to read from Keychain...');
-      credentials = readMacKeychainCredentials();
-
-      // Fallback to file if keychain fails (in case user manually created the file)
-      if (!credentials) {
-        console.log('[DEBUG] Keychain read failed, trying file fallback...');
-        credentials = readFileCredentials();
-      }
-    } else {
-      console.log(`[DEBUG] Detected ${currentPlatform}, reading from credentials file...`);
-      credentials = readFileCredentials();
-    }
-
-    // Validate OAuth access token
-    const hasValidToken = credentials?.claudeAiOauth?.accessToken &&
-                         credentials.claudeAiOauth.accessToken.length > 0;
-
-    if (hasValidToken) {
-      console.log('[DEBUG] Valid CLI session found with access token');
-      return true;
-    } else {
-      console.log('[DEBUG] No valid access token found in credentials');
-      return false;
-    }
-  } catch (error) {
-    console.log('[DEBUG] Failed to check CLI session:', error.message);
-    return false;
+export function loadClaudeSettings() {
+  const runtimeState = getClaudeRuntimeState();
+  if (!canReadClaudeSettings(runtimeState)) {
+    debugLog('[DEBUG] Skipping ~/.claude/settings.json read: Claude provider is inactive');
+    return null;
   }
+  return readClaudeSettingsFromDisk();
 }
 
 /**
@@ -128,13 +339,10 @@ export function hasCliSessionAuth() {
  * @returns {Object} Contains apiKey, baseUrl, authType and their sources
  */
 export function setupApiKey() {
-  console.log('[DIAG-CONFIG] ========== setupApiKey() START ==========');
-
+  const runtimeState = getClaudeRuntimeState();
   const settings = loadClaudeSettings();
-  console.log('[DIAG-CONFIG] Settings loaded:', settings ? 'yes' : 'no');
-  if (settings?.env) {
-    console.log('[DIAG-CONFIG] Settings env keys:', Object.keys(settings.env));
-  }
+  injectNetworkEnvVars(settings);
+  clearRuntimeAuthEnv();
 
   let apiKey;
   let baseUrl;
@@ -144,7 +352,36 @@ export function setupApiKey() {
 
   // Configuration priority: only read from settings.json, ignore system environment variables.
   // This ensures a single source of truth and avoids interference from shell environment variables.
-  console.log('[DEBUG] Loading configuration from settings.json only (ignoring shell environment variables)...');
+  debugLog('[DEBUG] Loading configuration from settings.json only (ignoring shell environment variables)...');
+
+  if (settings?.env?.ANTHROPIC_BASE_URL) {
+    baseUrl = settings.env.ANTHROPIC_BASE_URL;
+    baseUrlSource = 'settings.json';
+  }
+
+  // HIGHEST PRIORITY: CLI login mode. When user explicitly opted in via plugin UI,
+  // strictly use SDK native OAuth flow. No fallback to other auth methods.
+  //
+  // Source of truth: ~/.codemoss/config.json (claude.current === "__cli_login__"),
+  // surfaced by getClaudeRuntimeState() above. We deliberately do NOT consult
+  // ~/.claude/settings.json for this signal — that file is user-owned and must not
+  // be mutated by provider switches. The legacy CCGUI_CLI_LOGIN_AUTHORIZED env flag
+  // is honored as a fallback for users upgrading from versions that wrote it to
+  // settings.json, so they keep working until that residue is cleaned up.
+  const cliLoginAuthorized =
+    runtimeState.access === 'cli_login' || settings?.env?.CCGUI_CLI_LOGIN_AUTHORIZED === '1';
+  if (cliLoginAuthorized) {
+    // Use empty string assignment instead of delete so the SDK falls through to
+    // its native OAuth flow without inheriting stale values from prior requests.
+    process.env.ANTHROPIC_API_KEY = '';
+    process.env.ANTHROPIC_AUTH_TOKEN = '';
+
+    if (baseUrl) {
+      process.env.ANTHROPIC_BASE_URL = baseUrl;
+    }
+
+    return { apiKey: null, baseUrl, authType: 'cli_login', apiKeySource: 'CLI login (SDK native auth)', baseUrlSource };
+  }
 
   // Prefer ANTHROPIC_AUTH_TOKEN (Bearer auth), fall back to ANTHROPIC_API_KEY (x-api-key auth).
   // This supports both authentication methods used by the Claude Code CLI.
@@ -162,72 +399,49 @@ export function setupApiKey() {
     apiKeySource = 'settings.json (AWS_BEDROCK)';
   }
 
-  if (settings?.env?.ANTHROPIC_BASE_URL) {
-    baseUrl = settings.env.ANTHROPIC_BASE_URL;
-    baseUrlSource = 'settings.json';
-  }
-
-  // If no API Key is configured, check for CLI session authentication
   if (!apiKey) {
-    console.log('[DEBUG] No API Key found in settings.json, checking for CLI session...');
+    debugLog('[DEBUG] No API Key found in settings.json, checking for apiKeyHelper...');
 
-    if (hasCliSessionAuth()) {
-      // Use CLI session authentication
-      console.log('[INFO] Using CLI session authentication (claude login)');
-      authType = 'cli_session';
-      // Set source based on platform
-      const currentPlatform = platform();
-      apiKeySource = currentPlatform === 'darwin'
-        ? 'CLI session (macOS Keychain)'
-        : 'CLI session (~/.claude/.credentials.json)';
+    // Check for apiKeyHelper in managed settings or user settings before giving up.
+    // The SDK handles apiKeyHelper execution natively, so we just need to not throw.
+    const managedSettings = loadManagedSettings();
+    const hasApiKeyHelper = managedSettings?.apiKeyHelper || settings?.apiKeyHelper;
 
-      // Clear all API Key environment variables so the SDK auto-detects the CLI session
-      delete process.env.ANTHROPIC_API_KEY;
-      delete process.env.ANTHROPIC_AUTH_TOKEN;
+    if (hasApiKeyHelper) {
+      authType = 'api_key_helper';
+      apiKeySource = managedSettings?.apiKeyHelper
+        ? 'managed-settings.json (apiKeyHelper)'
+        : 'settings.json (apiKeyHelper)';
 
-      // Set baseUrl if configured
       if (baseUrl) {
         process.env.ANTHROPIC_BASE_URL = baseUrl;
       }
 
-      console.log('[DEBUG] Auth type:', authType);
+      debugLog('[DEBUG] Auth type:', authType);
       return { apiKey: null, baseUrl, authType, apiKeySource, baseUrlSource };
-    } else {
-      // Neither API Key nor CLI session found
-      console.error('[ERROR] API Key not configured and no CLI session found.');
-      console.error('[ERROR] Please either:');
-      console.error('[ERROR]   1. Set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN in ~/.claude/settings.json');
-      console.error('[ERROR]   2. Run "claude login" to authenticate via CLI');
-      throw new Error('API Key not configured and no CLI session found');
     }
+
+    console.error('[ERROR] API Key not configured.');
+    console.error('[ERROR] Please either:');
+    console.error('[ERROR]   1. Configure ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN in Provider Management');
+    console.error('[ERROR]   2. Explicitly enable local ~/.claude/settings.json mode and set credentials there');
+    console.error('[ERROR]   3. Configure apiKeyHelper in managed-settings.json or settings.json');
+    throw new Error('API Key not configured');
   }
 
   // Set the corresponding environment variables based on auth type
   if (authType === 'auth_token') {
     process.env.ANTHROPIC_AUTH_TOKEN = apiKey;
-    // Clear ANTHROPIC_API_KEY to avoid confusion
-    delete process.env.ANTHROPIC_API_KEY;
   } else if (authType === 'aws_bedrock') {
-    delete process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_AUTH_TOKEN;
   } else {
     process.env.ANTHROPIC_API_KEY = apiKey;
-    // Clear ANTHROPIC_AUTH_TOKEN to avoid confusion
-    delete process.env.ANTHROPIC_AUTH_TOKEN;
   }
 
   if (baseUrl) {
     process.env.ANTHROPIC_BASE_URL = baseUrl;
   }
 
-  console.log('[DEBUG] Auth type:', authType);
-
-  console.log('[DIAG-CONFIG] ========== setupApiKey() RESULT ==========');
-  console.log('[DIAG-CONFIG] authType:', authType);
-  console.log('[DIAG-CONFIG] apiKeySource:', apiKeySource);
-  console.log('[DIAG-CONFIG] baseUrl:', baseUrl || '(not set)');
-  console.log('[DIAG-CONFIG] baseUrlSource:', baseUrlSource);
-  console.log('[DIAG-CONFIG] apiKey preview:', apiKey ? `${apiKey.substring(0, 10)}...` : '(null)');
+  debugLog('[DEBUG] Auth type:', authType);
 
   return { apiKey, baseUrl, authType, apiKeySource, baseUrlSource };
 }

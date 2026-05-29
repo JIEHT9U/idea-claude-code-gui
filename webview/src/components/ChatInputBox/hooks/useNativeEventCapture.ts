@@ -7,7 +7,6 @@ interface CompletionOpenLike {
 
 export interface UseNativeEventCaptureOptions {
   editableRef: React.RefObject<HTMLDivElement | null>;
-  isComposing: boolean;
   isComposingRef: MutableRefObject<boolean>;
   lastCompositionEndTimeRef: MutableRefObject<number>;
   sendShortcut: 'enter' | 'cmdEnter';
@@ -15,6 +14,7 @@ export interface UseNativeEventCaptureOptions {
   commandCompletion: CompletionOpenLike;
   agentCompletion: CompletionOpenLike;
   promptCompletion: CompletionOpenLike;
+  dollarCommandCompletion: CompletionOpenLike;
   completionSelectedRef: MutableRefObject<boolean>;
   submittedOnEnterRef: MutableRefObject<boolean>;
   handleSubmit: () => void;
@@ -31,7 +31,6 @@ export interface UseNativeEventCaptureOptions {
  */
 export function useNativeEventCapture({
   editableRef,
-  isComposing,
   isComposingRef,
   lastCompositionEndTimeRef,
   sendShortcut,
@@ -39,6 +38,7 @@ export function useNativeEventCapture({
   commandCompletion,
   agentCompletion,
   promptCompletion,
+  dollarCommandCompletion,
   completionSelectedRef,
   submittedOnEnterRef,
   handleSubmit,
@@ -47,7 +47,6 @@ export function useNativeEventCapture({
   // Keep latest values without re-subscribing native listeners on every render.
   const latestRef = useRef<UseNativeEventCaptureOptions>({
     editableRef,
-    isComposing,
     isComposingRef,
     lastCompositionEndTimeRef,
     sendShortcut,
@@ -55,6 +54,7 @@ export function useNativeEventCapture({
     commandCompletion,
     agentCompletion,
     promptCompletion,
+    dollarCommandCompletion,
     completionSelectedRef,
     submittedOnEnterRef,
     handleSubmit,
@@ -62,7 +62,6 @@ export function useNativeEventCapture({
   });
   latestRef.current = {
     editableRef,
-    isComposing,
     isComposingRef,
     lastCompositionEndTimeRef,
     sendShortcut,
@@ -70,6 +69,7 @@ export function useNativeEventCapture({
     commandCompletion,
     agentCompletion,
     promptCompletion,
+    dollarCommandCompletion,
     completionSelectedRef,
     submittedOnEnterRef,
     handleSubmit,
@@ -82,10 +82,13 @@ export function useNativeEventCapture({
 
     const nativeKeyDown = (ev: KeyboardEvent) => {
       const latest = latestRef.current;
-      const isIMEProcessing = ev.keyCode === 229 || ev.isComposing;
-      if (isIMEProcessing) {
-        latest.isComposingRef.current = true;
-      }
+
+      // NOTE: We intentionally do NOT set isComposingRef here based on keyCode 229.
+      // IME composing state is managed exclusively by compositionStart/End events.
+      // In JCEF, keyCode 229 is reported for ALL keys while the Korean IME is active,
+      // including space, which is not an actual composition. Setting isComposingRef=true
+      // here without a corresponding compositionEnd to clear it causes the ref to get
+      // stuck, blocking handleInput and causing cursor jumping on space key.
 
       const isEnterKey = ev.key === 'Enter' || ev.keyCode === 13;
 
@@ -111,7 +114,7 @@ export function useNativeEventCapture({
         ((ev.key === 'e' || ev.key === 'E') && ev.ctrlKey && !ev.metaKey);
       if (isCursorMovementKey) return;
 
-      if (latest.fileCompletion.isOpen || latest.commandCompletion.isOpen || latest.agentCompletion.isOpen || latest.promptCompletion.isOpen) {
+      if (latest.fileCompletion.isOpen || latest.commandCompletion.isOpen || latest.agentCompletion.isOpen || latest.promptCompletion.isOpen || latest.dollarCommandCompletion.isOpen) {
         return;
       }
 
@@ -120,11 +123,10 @@ export function useNativeEventCapture({
       const metaOrCtrl = ev.metaKey || ev.ctrlKey;
       const isSendKey =
         latest.sendShortcut === 'cmdEnter'
-          ? isEnterKey && metaOrCtrl && !latest.isComposingRef.current && !latest.isComposing
+          ? isEnterKey && metaOrCtrl && !latest.isComposingRef.current
           : isEnterKey &&
             !shift &&
             !latest.isComposingRef.current &&
-            !latest.isComposing &&
             !isRecentlyComposing;
 
       if (!isSendKey) return;
@@ -166,7 +168,7 @@ export function useNativeEventCapture({
         latest.completionSelectedRef.current = false;
         return;
       }
-      if (latest.fileCompletion.isOpen || latest.commandCompletion.isOpen || latest.agentCompletion.isOpen || latest.promptCompletion.isOpen) {
+      if (latest.fileCompletion.isOpen || latest.commandCompletion.isOpen || latest.agentCompletion.isOpen || latest.promptCompletion.isOpen || latest.dollarCommandCompletion.isOpen) {
         return;
       }
       latest.handleSubmit();

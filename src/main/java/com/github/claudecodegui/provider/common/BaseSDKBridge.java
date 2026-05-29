@@ -9,6 +9,7 @@ import com.github.claudecodegui.bridge.NodeDetector;
 import com.github.claudecodegui.bridge.ProcessManager;
 import com.github.claudecodegui.startup.BridgePreloader;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.util.concurrency.AppExecutorUtil;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -18,6 +19,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Base SDK bridge class.
@@ -29,7 +32,12 @@ public abstract class BaseSDKBridge {
 
     protected final Logger LOG;
     protected final Gson gson = new Gson();
-    protected final NodeDetector nodeDetector = new NodeDetector();
+    /**
+     * Shared NodeDetector instance (singleton pattern).
+     * This ensures that ClaudeSDKBridge and CodexSDKBridge share the same cache,
+     * avoiding redundant Node.js path detections across modes.
+     */
+    protected final NodeDetector nodeDetector = NodeDetector.getInstance();
     protected final ProcessManager processManager = new ProcessManager();
     protected final EnvironmentConfigurator envConfigurator = new EnvironmentConfigurator();
 
@@ -43,6 +51,8 @@ public abstract class BaseSDKBridge {
 
     protected BaseSDKBridge(Class<?> loggerClass) {
         this.LOG = Logger.getInstance(loggerClass);
+        // Inject IntelliJ's managed executor into NodeDetector for in-flight detection tasks.
+        this.nodeDetector.setDetectionExecutor(AppExecutorUtil.getAppExecutorService());
     }
 
     // ============================================================================
@@ -69,16 +79,16 @@ public abstract class BaseSDKBridge {
      * @param callback         Message callback
      * @param result           SDK result being built
      * @param assistantContent StringBuilder for accumulating assistant content
-     * @param hadSendError     Flag array indicating if send error occurred
-     * @param lastNodeError    Array to store the last Node.js error
+     * @param hadSendError     Flag indicating if send error occurred
+     * @param lastNodeError    Holder for the last Node.js error
      */
     protected abstract void processOutputLine(
             String line,
             MessageCallback callback,
             SDKResult result,
             StringBuilder assistantContent,
-            boolean[] hadSendError,
-            String[] lastNodeError
+            AtomicBoolean hadSendError,
+            AtomicReference<String> lastNodeError
     );
 
     // ============================================================================
@@ -105,6 +115,13 @@ public abstract class BaseSDKBridge {
      */
     public String getSessionId() {
         return envConfigurator.getSessionId();
+    }
+
+    /**
+     * Sets the current bridge session ID for permission service routing alignment.
+     */
+    public void setSessionId(String sessionId) {
+        envConfigurator.setSessionId(sessionId);
     }
 
     /**
@@ -160,7 +177,8 @@ public abstract class BaseSDKBridge {
     public boolean checkEnvironment() {
         try {
             String node = nodeDetector.findNodeExecutable();
-            ProcessBuilder pb = new ProcessBuilder(node, "--version");
+            List<String> versionCmd = NodeDetector.buildNodeScriptCommand(node, "--version");
+            ProcessBuilder pb = new ProcessBuilder(versionCmd);
             envConfigurator.updateProcessEnvironment(pb, node);
             Process process = pb.start();
 
@@ -192,7 +210,7 @@ public abstract class BaseSDKBridge {
             LOG.info("Environment check passed for " + getProviderName());
             return true;
         } catch (Exception e) {
-            LOG.error("Environment check failed: " + e.getMessage());
+            LOG.warn("Environment check failed: " + e.getMessage());
             return false;
         }
     }
@@ -222,8 +240,8 @@ public abstract class BaseSDKBridge {
         return CompletableFuture.supplyAsync(() -> {
             SDKResult result = new SDKResult();
             StringBuilder assistantContent = new StringBuilder();
-            final boolean[] hadSendError = {false};
-            final String[] lastNodeError = {null};
+            AtomicBoolean hadSendError = new AtomicBoolean(false);
+            AtomicReference<String> lastNodeError = new AtomicReference<>(null);
 
             try {
                 File bridgeDir = getDirectoryResolver().findSdkDir();
@@ -289,7 +307,7 @@ public abstract class BaseSDKBridge {
                                     || line.startsWith("[STARTUP_ERROR]")
                                     || line.startsWith("[ERROR]")) {
                                 LOG.warn("[Node.js ERROR] " + line);
-                                lastNodeError[0] = line;
+                                lastNodeError.set(line);
                             }
 
                             // Delegate to subclass for provider-specific processing
@@ -309,14 +327,15 @@ public abstract class BaseSDKBridge {
                         result.success = false;
                         result.error = "User interrupted";
                         callback.onComplete(result);
-                    } else if (!hadSendError[0]) {
+                    } else if (!hadSendError.get()) {
                         result.success = exitCode == 0;
                         if (result.success) {
                             callback.onComplete(result);
                         } else {
                             String errorMsg = getProviderName() + " process exited with code: " + exitCode;
-                            if (lastNodeError[0] != null && !lastNodeError[0].isEmpty()) {
-                                errorMsg = errorMsg + "\n\nDetails: " + lastNodeError[0];
+                            String nodeErr = lastNodeError.get();
+                            if (nodeErr != null && !nodeErr.isEmpty()) {
+                                errorMsg = errorMsg + "\n\nDetails: " + nodeErr;
                             }
                             result.error = errorMsg;
                             callback.onError(errorMsg);
@@ -351,6 +370,8 @@ public abstract class BaseSDKBridge {
 
     /**
      * Build the base command for invoking channel-manager.js.
+     * When the node executable is a WSL path, prepends 'wsl' and converts
+     * the script path to a WSL-accessible format.
      *
      * @param action The action to perform (e.g., "send", "sendWithAttachments")
      * @return Command list
@@ -365,8 +386,8 @@ public abstract class BaseSDKBridge {
                 return command;
             }
 
-            command.add(node);
-            command.add(new File(bridgeDir, CHANNEL_SCRIPT).getAbsolutePath());
+            String scriptPath = new File(bridgeDir, CHANNEL_SCRIPT).getAbsolutePath();
+            command.addAll(NodeDetector.buildNodeScriptCommand(node, scriptPath));
             command.add(getProviderName());
             command.add(action);
         } catch (Exception e) {

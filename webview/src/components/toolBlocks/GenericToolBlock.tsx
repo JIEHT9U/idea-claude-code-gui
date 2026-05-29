@@ -2,9 +2,42 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ToolInput, ToolResultBlock } from '../../types';
 import { useIsToolDenied } from '../../hooks/useIsToolDenied';
+import { useResolvedFileLinkTooltip } from '../../hooks/useResolvedFileLinkTooltip';
 import { openFile } from '../../utils/bridge';
-import { formatParamValue, getFileName, truncate } from '../../utils/helpers';
+import { formatParamValue, truncate } from '../../utils/helpers';
 import { getFileIcon, getFolderIcon } from '../../utils/fileIcons';
+import { isCommandToolName, parseCommandType } from '../../utils/toolCommandPath';
+import { getToolLineInfo, resolveToolTarget, summarizeToolCommand, extractPathsFromPatch } from '../../utils/toolPresentation';
+
+const SUMMARY_FILE_STYLE: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  maxWidth: 'fit-content',
+};
+
+const FILE_ICON_STYLE: React.CSSProperties = {
+  marginRight: '4px',
+  display: 'flex',
+  alignItems: 'center',
+  width: '16px',
+  height: '16px',
+};
+
+const PATCH_FILES_CONTAINER_STYLE: React.CSSProperties = {
+  display: 'flex',
+  gap: '8px',
+  flexWrap: 'wrap',
+};
+
+const PATCH_FILE_LINK_STYLE: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+};
+
+const LINE_INFO_STYLE: React.CSSProperties = {
+  marginLeft: '8px',
+  fontSize: '12px',
+};
 
 const CODICON_MAP: Record<string, string> = {
   read: 'codicon-eye',
@@ -20,17 +53,9 @@ const CODICON_MAP: Record<string, string> = {
   augmentcontextengine: 'codicon-symbol-class', // Added based on Picture 2
   update_plan: 'codicon-checklist', // Update plan tool
   shell_command: 'codicon-terminal', // Shell command tool
-};
-
-/**
- * Check if a shell command is a file/directory viewing operation
- */
-const isFileViewingCommand = (command?: string): boolean => {
-  if (!command || typeof command !== 'string') return false;
-  const trimmed = command.trim();
-  // File viewing: pwd, ls, cat, head, tail, sed -n, tree
-  return /^(pwd|ls|cat|head|tail|tree|file|stat)\b/.test(trimmed) ||
-         /^sed\s+-n\s+/.test(trimmed);
+  shell_command_read: 'codicon-eye',
+  shell_command_list: 'codicon-folder',
+  shell_command_search: 'codicon-search',
 };
 
 const getToolDisplayName = (t: any, name?: string, input?: ToolInput) => {
@@ -40,10 +65,21 @@ const getToolDisplayName = (t: any, name?: string, input?: ToolInput) => {
 
   const lowerName = name.toLowerCase();
 
-  // For shell_command, check the actual command to determine display name
-  if (lowerName === 'shell_command' && input?.command) {
-    if (isFileViewingCommand(input.command as string)) {
-      return t('tools.readFile');
+  // Codex uses 'cmd', others use 'command'
+  const commandStr = (input?.command as string | undefined) ?? (input?.cmd as string | undefined);
+
+  // For command-executing tools, check the actual command to determine display name
+  if (isCommandToolName(lowerName) && commandStr) {
+    const parsed = parseCommandType(commandStr);
+    switch (parsed.type) {
+      case 'read':
+        return t('tools.readFile');
+      case 'list':
+        return t('tools.listFiles');
+      case 'search':
+        return t('tools.search');
+      default:
+        return t('tools.runCommand');
     }
   }
 
@@ -77,6 +113,7 @@ const getToolDisplayName = (t: any, name?: string, input?: ToolInput) => {
     'find': 'tools.findFile',
     'todowrite': 'tools.todoList',
     'update_plan': 'tools.updatePlan',
+    'apply_patch': 'tools.applyPatch',
   };
 
   if (toolKeyMap[lowerName]) {
@@ -100,107 +137,25 @@ const getToolDisplayName = (t: any, name?: string, input?: ToolInput) => {
   return name;
 };
 
-/**
- * Extract file/directory path from command string (for Codex commands)
- * Returns the path with optional metadata suffix (e.g., ":700-780" for line ranges, "/" for directories)
- */
-const extractFilePathFromCommand = (command: string | undefined, workdir?: string): string | undefined => {
-  if (!command || typeof command !== 'string') return undefined;
-
-  let trimmed = command.trim();
-
-  // Extract actual command from shell wrapper (/bin/zsh -lc '...' or /bin/bash -c '...')
-  const shellWrapperMatch = trimmed.match(/^\/bin\/(zsh|bash)\s+(?:-lc|-c)\s+['"](.+)['"]$/);
-  if (shellWrapperMatch) {
-    trimmed = shellWrapperMatch[2];
-  }
-
-  // Remove 'cd dir &&' prefix if present
-  const cdPrefixMatch = trimmed.match(/^cd\s+\S+\s+&&\s+(.+)$/);
-  if (cdPrefixMatch) {
-    trimmed = cdPrefixMatch[1].trim();
-  }
-
-  // Match pwd command - returns current directory from workdir
-  if (/^pwd\s*$/.test(trimmed)) {
-    return workdir ? workdir + '/' : undefined;
-  }
-
-  // Match ls command (with or without flags)
-  // Examples: ls, ls -a, ls -la, ls /path, ls -a /path
-  const lsMatch = trimmed.match(/^ls\s+(?:-[a-zA-Z]+\s+)?(.+)$/);
-  if (lsMatch) {
-    const path = lsMatch[1].trim().replace(/^["']|["']$/g, '');
-    // Add trailing slash to indicate directory
-    return path.endsWith('/') ? path : path + '/';
-  }
-
-  // Match ls without path (current directory)
-  if (/^ls(?:\s+-[a-zA-Z]+)*\s*$/.test(trimmed)) {
-    return workdir ? workdir + '/' : undefined;
-  }
-
-  // Match tree command (directory listing)
-  if (/^tree\b/.test(trimmed)) {
-    const treeMatch = trimmed.match(/^tree\s+(.+)$/);
-    if (treeMatch) {
-      const path = treeMatch[1].trim().replace(/^["']|["']$/g, '');
-      return path.endsWith('/') ? path : path + '/';
-    }
-    return workdir ? workdir + '/' : undefined;
-  }
-
-  // Match sed -n command (e.g., sed -n '700,780p' file.txt)
-  const sedMatch = trimmed.match(/^sed\s+-n\s+['"]?(\d+)(?:,(\d+))?p['"]?\s+(.+)$/);
-  if (sedMatch) {
-    const startLine = sedMatch[1];
-    const endLine = sedMatch[2];
-    const path = sedMatch[3].trim().replace(/^["']|["']$/g, '');
-
-    // Return file path with line range info
-    if (endLine) {
-      return `${path}:${startLine}-${endLine}`;
-    } else {
-      return `${path}:${startLine}`;
-    }
-  }
-
-  // Match cat command (simple case without flags)
-  const catMatch = trimmed.match(/^cat\s+(.+)$/);
-  if (catMatch) {
-    const path = catMatch[1].trim();
-    // Remove quotes if present
-    return path.replace(/^["']|["']$/g, '');
-  }
-
-  // Match head/tail commands (may have flags like -n 10)
-  const headTailMatch = trimmed.match(/^(head|tail)\s+(?:.*\s)?([^\s-][^\s]*)$/);
-  if (headTailMatch) {
-    const path = headTailMatch[2].trim();
-    // Remove quotes if present
-    return path.replace(/^["']|["']$/g, '');
-  }
-
-  return undefined;
-};
-
-const pickFilePath = (input: ToolInput, name?: string) => {
-  // First try standard file path fields
-  const standardPath = (input.file_path as string | undefined) ??
-    (input.path as string | undefined) ??
-    (input.target_file as string | undefined) ??
-    (input.notebook_path as string | undefined);
-
-  if (standardPath) return standardPath;
-
-  // For Codex read or shell_command commands, extract from command string
+const getToolCodicon = (name?: string, input?: ToolInput): string => {
   const lowerName = (name ?? '').toLowerCase();
-  if ((lowerName === 'read' || lowerName === 'shell_command') && input.command) {
-    const workdir = (input.workdir as string | undefined) ?? undefined;
-    return extractFilePathFromCommand(input.command as string, workdir);
+  const commandStr = (input?.command as string | undefined) ?? (input?.cmd as string | undefined);
+
+  if (isCommandToolName(lowerName) && commandStr) {
+    const parsed = parseCommandType(commandStr);
+    switch (parsed.type) {
+      case 'read':
+        return CODICON_MAP.shell_command_read ?? CODICON_MAP.shell_command;
+      case 'list':
+        return CODICON_MAP.shell_command_list ?? CODICON_MAP.shell_command;
+      case 'search':
+        return CODICON_MAP.shell_command_search ?? CODICON_MAP.shell_command;
+      default:
+        return CODICON_MAP.shell_command;
+    }
   }
 
-  return undefined;
+  return CODICON_MAP[lowerName] ?? 'codicon-tools';
 };
 
 const omitFields = new Set([
@@ -209,9 +164,12 @@ const omitFields = new Set([
   'target_file',
   'notebook_path',
   'command',
+  'cmd',          // Codex uses 'cmd' instead of 'command'
   'search_term',
-  'description',  // Omit Codex description field
-  'workdir',      // Omit Codex workdir field
+  'description',  // Codex description field
+  'workdir',      // Codex workdir field
+  'yield_time_ms',
+  'max_output_tokens',
 ]);
 
 interface GenericToolBlockProps {
@@ -222,17 +180,47 @@ interface GenericToolBlockProps {
   toolId?: string;
 }
 
+interface PatchFileLinkProps {
+  path: string;
+}
+
+const PatchFileLink = ({ path }: PatchFileLinkProps) => {
+  const fileName = path.split('/').pop() || path;
+  const ext = fileName.includes('.') ? fileName.split('.').pop() : '';
+  const tooltip = useResolvedFileLinkTooltip(path, path);
+
+  return (
+    <span
+      className="clickable-file"
+      onClick={(e) => {
+        e.stopPropagation();
+        openFile(path);
+      }}
+      {...tooltip}
+      style={PATCH_FILE_LINK_STYLE}
+    >
+      <span
+        style={FILE_ICON_STYLE}
+        dangerouslySetInnerHTML={{ __html: getFileIcon(ext ?? '', fileName) }}
+      />
+      {fileName}
+    </span>
+  );
+};
+
 const GenericToolBlock = ({ name, input, result, toolId }: GenericToolBlockProps) => {
   const { t } = useTranslation();
-  // Tools that should be collapsible (Grep, Glob, Write, Update Plan, Shell Command and MCP tools)
   const lowerName = (name ?? '').toLowerCase();
-  const isMcpTool = lowerName.startsWith('mcp__');
-  const isCollapsible = ['grep', 'glob', 'write', 'save-file', 'askuserquestion', 'update_plan', 'shell_command', 'exitplanmode', 'webfetch', 'websearch', 'skill', 'useskill', 'runskill', 'run_skill', 'execute_skill', 'taskoutput'].includes(lowerName) || isMcpTool;
   const [expanded, setExpanded] = useState(false);
-
-  const filePath = input ? pickFilePath(input, name) : undefined;
-
   const isDenied = useIsToolDenied(toolId);
+
+  // Ignore write_stdin tool - it's waiting for previous command result
+  if (lowerName === 'write_stdin') {
+    return null;
+  }
+
+  const target = input ? resolveToolTarget(input, name) : undefined;
+  const filePath = target?.rawPath;
 
   // Determine tool call status based on result
   // If denied, treat as completed (show error state)
@@ -248,13 +236,23 @@ const GenericToolBlock = ({ name, input, result, toolId }: GenericToolBlockProps
   }
 
   const displayName = getToolDisplayName(t, name, input);
-  const codicon = CODICON_MAP[(name ?? '').toLowerCase()] ?? 'codicon-tools';
+  const codicon = getToolCodicon(name, input);
+
+  // Codex uses 'cmd', others use 'command'
+  const commandStr = (typeof input.command === 'string' ? input.command : undefined) ??
+    (typeof input.cmd === 'string' ? input.cmd : undefined);
 
   let summary: string | null = null;
-  if (filePath) {
-    summary = getFileName(filePath);
-  } else if (typeof input.command === 'string') {
-    summary = truncate(input.command);
+  if (target) {
+    summary = target.cleanFileName || target.displayPath;
+  } else if (commandStr) {
+    const parsed = parseCommandType(commandStr);
+    if (parsed.type === 'read' && parsed.path) {
+      const pathParts = parsed.path.split('/');
+      summary = pathParts[pathParts.length - 1] || parsed.path;
+    } else {
+      summary = summarizeToolCommand(commandStr) ?? truncate(commandStr);
+    }
   } else if (typeof input.search_term === 'string') {
     summary = truncate(input.search_term);
   } else if (typeof input.pattern === 'string') {
@@ -265,63 +263,55 @@ const GenericToolBlock = ({ name, input, result, toolId }: GenericToolBlockProps
     ([key]) => !omitFields.has(key) && key !== 'pattern',
   );
 
-  const shouldShowDetails = otherParams.length > 0 && (!isCollapsible || expanded);
+  const hasExpandableContent = otherParams.length > 0;
+  const isDirectoryPath = target?.isDirectory ?? false;
+  const isFilePath = target?.isFile ?? false;
+  const lineInfo = input && target ? getToolLineInfo(input, target) : {};
 
-  // Check if it's a special file (no extension but still a file)
-  const isSpecialFile = (fileName: string): boolean => {
-    const specialFiles = [
-      'makefile', 'dockerfile', 'jenkinsfile', 'vagrantfile',
-      'gemfile', 'rakefile', 'procfile', 'guardfile',
-      'license', 'licence', 'readme', 'changelog',
-      'gradlew', 'cname', 'authors', 'contributors'
-    ];
-    return specialFiles.includes(fileName.toLowerCase());
-  };
-
-  // Determine if it's a directory: ends with /, is . or .., or filename has no extension (and is not a special file)
-  const fileName = filePath ? getFileName(filePath) : '';
-  // Remove line number suffix when checking if it's a directory
-  const cleanFileName = fileName.replace(/:\d+(-\d+)?$/, '');
-  const isDirectoryPath = filePath && (
-    filePath.endsWith('/') ||
-    filePath === '.' ||
-    filePath === '..' ||
-    (!cleanFileName.includes('.') && !isSpecialFile(cleanFileName))
-  );
-  // Determine if it's a file path (not a directory)
-  const isFilePath = filePath && !isDirectoryPath;
+  // For command-executing tools with read type, treat as file if we have a path
+  const isCommandRead = isCommandToolName(lowerName) && commandStr && parseCommandType(commandStr).type === 'read';
+  const effectiveIsFile = isFilePath || isCommandRead;
 
   const handleFileClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (isFilePath) {
-      openFile(filePath);
+    if (target) {
+      openFile(target.openPath, lineInfo.start, lineInfo.end);
     }
   };
 
-  const getFileIconSvg = (path?: string) => {
-    if (!path) return '';
-    const name = getFileName(path);
-
+  const getFileIconSvg = () => {
+    if (!target) return '';
     if (isDirectoryPath) {
-      // For directories, use getFolderIcon to get a colored folder icon
-      return getFolderIcon(name);
-    } else {
-      // Remove line number suffix if present (e.g., "App.tsx:700-780" -> "App.tsx")
-      const cleanName = name.replace(/:\d+(-\d+)?$/, '');
-      const extension = cleanName.indexOf('.') !== -1 ? cleanName.split('.').pop() : '';
-      return getFileIcon(extension, cleanName);
+      return getFolderIcon(target.cleanFileName);
     }
+    const extension = target.cleanFileName.includes('.') ? target.cleanFileName.split('.').pop() : '';
+    return getFileIcon(extension ?? '', target.cleanFileName);
+  };
+
+  const tooltipPath = target?.displayPath ?? filePath ?? summary ?? '';
+  const fileLinkTooltip = useResolvedFileLinkTooltip(
+    effectiveIsFile ? filePath : undefined,
+    tooltipPath || undefined,
+  );
+
+  // Extract all file paths for apply_patch tool
+  const patchContent = lowerName === 'apply_patch'
+    ? ((typeof input.input === 'string' ? input.input : undefined) ??
+       (typeof input.patch === 'string' ? input.patch : undefined) ??
+       (typeof input.content === 'string' ? input.content : undefined))
+    : undefined;
+  const patchFiles = patchContent ? extractPathsFromPatch(patchContent) : [];
+
+  const headerStyle: React.CSSProperties = {
+    cursor: hasExpandableContent ? 'pointer' : 'default',
   };
 
   return (
     <div className="task-container">
       <div
         className="task-header"
-        onClick={isCollapsible ? () => setExpanded((prev) => !prev) : undefined}
-        style={{
-          cursor: isCollapsible ? 'pointer' : 'default',
-          borderBottom: expanded && isCollapsible ? '1px solid var(--border-primary)' : undefined,
-        }}
+        onClick={hasExpandableContent ? () => setExpanded((prev) => !prev) : undefined}
+        style={headerStyle}
       >
         <div className="task-title-section">
           <span className={`codicon ${codicon} tool-title-icon`} />
@@ -329,39 +319,54 @@ const GenericToolBlock = ({ name, input, result, toolId }: GenericToolBlockProps
           <span className="tool-title-text">
             {displayName}
           </span>
-          {summary && (
+          {summary && patchFiles.length === 0 && (
               <span
-                className={`task-summary-text tool-title-summary ${isFilePath ? 'clickable-file' : ''}`}
-                title={isFilePath ? `点击打开 ${filePath}` : summary}
-                onClick={isFilePath ? handleFileClick : undefined}
-                style={(isFilePath || isDirectoryPath) ? {
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  maxWidth: 'fit-content'
-                } : undefined}
+                className={`task-summary-text tool-title-summary ${effectiveIsFile ? 'clickable-file' : ''}`}
+                onClick={effectiveIsFile ? handleFileClick : undefined}
+                {...(effectiveIsFile ? fileLinkTooltip : {})}
+                style={(effectiveIsFile || isDirectoryPath) ? SUMMARY_FILE_STYLE : undefined}
               >
-                {(isFilePath || isDirectoryPath) && (
+                {(effectiveIsFile || isDirectoryPath) && (
                    <span
-                      style={{ marginRight: '4px', display: 'flex', alignItems: 'center', width: '16px', height: '16px' }}
-                      dangerouslySetInnerHTML={{ __html: getFileIconSvg(filePath) }}
+                      style={FILE_ICON_STYLE}
+                      dangerouslySetInnerHTML={{ __html: getFileIconSvg() }}
                    />
                 )}
                 {summary}
               </span>
             )}
+          {patchFiles.length > 0 && (
+            <span className="tool-title-summary" style={PATCH_FILES_CONTAINER_STYLE}>
+              {patchFiles.map((path, idx) => (
+                <PatchFileLink
+                  key={idx}
+                  path={path}
+                />
+              ))}
+            </span>
+          )}
+          {lineInfo.start && (
+            <span className="tool-title-summary" style={LINE_INFO_STYLE}>
+              {lineInfo.end && lineInfo.end !== lineInfo.start
+                ? t('tools.lineRange', { start: lineInfo.start, end: lineInfo.end })
+                : t('tools.lineSingle', { line: lineInfo.start })}
+            </span>
+          )}
         </div>
 
         <div className={`tool-status-indicator ${isError ? 'error' : isCompleted ? 'completed' : 'pending'}`} />
       </div>
-      {shouldShowDetails && (
-        <div className="task-details">
-          <div className="task-content-wrapper">
-            {otherParams.map(([key, value]) => (
-              <div key={key} className="task-field">
-                <div className="task-field-label">{key}</div>
-                <div className="task-field-content">{formatParamValue(value)}</div>
-              </div>
-            ))}
+      {hasExpandableContent && (
+        <div className={`task-details-accordion ${expanded ? 'expanded' : ''}`}>
+          <div className="task-details">
+            <div className="task-content-wrapper">
+              {otherParams.map(([key, value]) => (
+                <div key={key} className="task-field">
+                  <div className="task-field-label">{key}</div>
+                  <div className="task-field-content">{formatParamValue(value)}</div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -370,4 +375,3 @@ const GenericToolBlock = ({ name, input, result, toolId }: GenericToolBlockProps
 };
 
 export default GenericToolBlock;
-

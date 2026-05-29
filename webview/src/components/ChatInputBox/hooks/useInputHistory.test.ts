@@ -148,35 +148,60 @@ describe('useInputHistory', () => {
   });
 
   it('handles localStorage quota by dropping older entries and retrying', () => {
-    const original = Storage.prototype.setItem;
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
-      this: Storage,
-      key: string,
-      value: string
-    ) {
-      const str = String(value);
-      if (key === STORAGE_KEY && str.length > SIMULATED_QUOTA_LIMIT) {
-        throw new DOMException('quota', 'QuotaExceededError');
-      }
-      return original.call(this, key, str);
+    const originalDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    const backingStore: Record<string, string> = {};
+    const storage = {
+      getItem(key: string) {
+        return Object.prototype.hasOwnProperty.call(backingStore, key) ? backingStore[key] : null;
+      },
+      setItem(key: string, value: string) {
+        const str = String(value);
+        if (key === STORAGE_KEY && str.length > SIMULATED_QUOTA_LIMIT) {
+          throw new DOMException('quota', 'QuotaExceededError');
+        }
+        backingStore[key] = str;
+      },
+      removeItem(key: string) {
+        delete backingStore[key];
+      },
+      clear() {
+        Object.keys(backingStore).forEach((key) => delete backingStore[key]);
+      },
+      key(index: number) {
+        return Object.keys(backingStore)[index] ?? null;
+      },
+      get length() {
+        return Object.keys(backingStore).length;
+      },
+    } satisfies Storage;
+
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: storage,
     });
 
-    const editable = createEditable();
-    const { result } = renderHook(() =>
-      useInputHistory({
-        editableRef: { current: editable },
-        getTextContent: () => editable.innerText,
-        handleInput: vi.fn(),
-      })
-    );
+    try {
+      const editable = createEditable();
+      const { result } = renderHook(() =>
+        useInputHistory({
+          editableRef: { current: editable },
+          getTextContent: () => editable.innerText,
+          handleInput: vi.fn(),
+        })
+      );
 
-    result.current.record('a'.repeat(100));
-    result.current.record('b'.repeat(100));
-    result.current.record('c'.repeat(100));
+      result.current.record('a'.repeat(100));
+      result.current.record('b'.repeat(100));
+      result.current.record('c'.repeat(100));
 
-    const stored = readStored();
-    expect(stored).toHaveLength(1);
-    expect(stored[0]).toBe('c'.repeat(100));
+      const stored = readStored();
+      expect(stored).toHaveLength(1);
+      expect(stored[0]).toBe('c'.repeat(100));
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(window, 'localStorage', originalDescriptor);
+      }
+    }
   });
 
   it('ignores invalid JSON in localStorage', () => {

@@ -1,23 +1,38 @@
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import ErrorBoundary from './components/ErrorBoundary';
+import { MessagesProvider } from './contexts/MessagesContext';
+import { SessionProvider } from './contexts/SessionContext';
+import { UIStateProvider } from './contexts/UIStateContext';
+import { DialogProvider } from './contexts/DialogContext';
 import './codicon.css';
 import './styles/app.less';
 import './i18n/config';
 import i18n from './i18n/config';
 import { setupSlashCommandsCallback } from './components/ChatInputBox/providers/slashCommandProvider';
+import { setupDollarCommandsCallback } from './components/ChatInputBox/providers/dollarCommandProvider';
+import { applyLinkifyCapabilitiesPayload } from './utils/linkifyCapabilities';
+import { installRuntimeProviderDispatchers } from './utils/runtimeProviderCapabilities';
 import { sendBridgeEvent } from './utils/bridge';
+import { debugLog } from './utils/debug';
+import type { UiFontConfig } from './types/uiFontConfig';
 
-// Silence console output in production (including third-party libs).
-// In dev, keep console for debugging.
+// Silence noisy console output in production (including third-party libs).
+// console.error is preserved so ErrorBoundary and unhandled exceptions still
+// surface in the IDE's webview devtools — silencing it would hide regressions.
 if (!import.meta.env.DEV) {
   const noop = () => {};
   console.log = noop;
   console.debug = noop;
   console.info = noop;
   console.warn = noop;
-  console.error = noop;
 }
+
+// Install the runtime provider dispatcher exactly once so that every
+// consumer (Settings, RuntimeProviderSelect, …) receives provider events
+// through a deterministic subscriber registry instead of overriding
+// `window.update*Provider*` callbacks ad-hoc.
+installRuntimeProviderDispatchers();
 
 function createBridgeHeartbeatStarter() {
   let started = false;
@@ -70,9 +85,7 @@ function createBridgeHeartbeatStarter() {
       import.meta.hot.dispose(() => cleanup());
     }
 
-    if (import.meta.env.DEV) {
-      console.log('[Main] Bridge heartbeat enabled');
-    }
+    debugLog('[Main] Bridge heartbeat enabled');
   };
 }
 
@@ -172,14 +185,12 @@ function setupScaleRecovery() {
         // One more tick to reduce flakiness on macOS/JCEF.
         appStyle.zoom = expected;
       }
-      if (import.meta.env.DEV) {
-        console.log('[ScaleRecovery] Applied scale recovery:', {
-          reason,
-          expected,
-          computedZoom,
-          needsZoomNudge,
-        });
-      }
+      debugLog('[ScaleRecovery] Applied scale recovery:', {
+        reason,
+        expected,
+        computedZoom,
+        needsZoomNudge,
+      });
       lastRecoveryAt = Date.now();
     });
   };
@@ -193,7 +204,7 @@ function setupScaleRecovery() {
     });
   };
 
-  document.addEventListener('visibilitychange', () => {
+  const onVisibilityChange = () => {
     if (document.hidden) {
       hiddenAt = Date.now();
       return;
@@ -205,162 +216,374 @@ function setupScaleRecovery() {
     if (elapsed > 1500) {
       schedule('visibilitychange-resume');
     }
-  });
+  };
 
-  window.addEventListener('focus', () => {
+  const onWindowFocus = () => {
     // Focus can return without a visibilitychange in some IDE/window states.
     schedule('window-focus');
-  });
+  };
 
-  window.addEventListener('pageshow', () => {
+  const onPageShow = () => {
     // Helps if the page is restored from bfcache-like behavior.
     schedule('pageshow');
-  });
+  };
+
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  window.addEventListener('focus', onWindowFocus);
+  window.addEventListener('pageshow', onPageShow);
+
+  const cleanup = () => {
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    window.removeEventListener('focus', onWindowFocus);
+    window.removeEventListener('pageshow', onPageShow);
+  };
+
+  // Best-effort teardown to release listeners on navigation/unload, mirroring
+  // the heartbeat cleanup pattern above.
+  window.addEventListener('beforeunload', cleanup, { once: true });
+  window.addEventListener('pagehide', cleanup, { once: true });
+
+  if (import.meta.hot) {
+    import.meta.hot.dispose(() => cleanup());
+  }
 }
 
-function applyFontConfig(config: { fontFamily: string; fontSize: number; lineSpacing: number; fallbackFonts?: string[] }) {
-  const root = document.documentElement;
+let latestEditorFontConfig: {
+  fontFamily: string;
+  fontSize: number;
+  lineSpacing: number;
+  fallbackFonts?: string[];
+} | null = null;
 
-  // Build font family string with primary font, fallback fonts, and system defaults
-  const fontParts: string[] = [`'${config.fontFamily}'`];
+let latestUiFontConfig: UiFontConfig | null = null;
 
-  // Add IDEA-configured fallback fonts
+const UI_FONT_STYLE_ELEMENT_ID = 'cc-gui-font-face-style';
+
+function escapeCssFontName(name: string): string {
+  return name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function buildFontFamilyValue(config: { fontFamily: string; fallbackFonts?: string[] }) {
+  const fontParts: string[] = [`'${escapeCssFontName(config.fontFamily)}'`];
+
   if (config.fallbackFonts && config.fallbackFonts.length > 0) {
     for (const fallback of config.fallbackFonts) {
-      fontParts.push(`'${fallback}'`);
+      fontParts.push(`'${escapeCssFontName(fallback)}'`);
     }
   }
 
-  // Add system default fallback fonts
   fontParts.push("'Consolas'", 'monospace');
-
-  const fontFamily = fontParts.join(', ');
-
-  root.style.setProperty('--idea-editor-font-family', fontFamily);
-  root.style.setProperty('--idea-editor-font-size', `${config.fontSize}px`);
-  root.style.setProperty('--idea-editor-line-spacing', String(config.lineSpacing));
-
-  console.log('[Main] Applied IDEA font config:', config, 'fontFamily CSS:', fontFamily);
+  return fontParts.join(', ');
 }
 
-// Register the applyIdeaFontConfig function
-window.applyIdeaFontConfig = applyFontConfig;
+let currentFontBlobUrl: string | null = null;
 
-// Check for pending font config (Java side may execute before JS)
-if (window.__pendingFontConfig) {
-  console.log('[Main] Found pending font config, applying...');
-  applyFontConfig(window.__pendingFontConfig);
-  delete window.__pendingFontConfig;
+function escapeCssUrl(url: string): string {
+  return url.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n|\r/g, '');
 }
 
-/**
- * Apply IDEA language configuration to i18n
- * Only applies IDEA language if user hasn't manually set a language preference
- */
-function applyLanguageConfig(config: { language: string; ideaLocale?: string }) {
-  const { language } = config;
+function createFontBlobUrl(base64: string, format: string): string {
+  const mimeType = format === 'opentype' ? 'font/opentype' : 'font/truetype';
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  const blob = new Blob([bytes], { type: mimeType });
+  return URL.createObjectURL(blob);
+}
 
-  // Check if user has manually set a language preference
-  const manuallySet = localStorage.getItem('languageManuallySet') === 'true';
-  if (manuallySet) {
-    console.log('[Main] User has manually set language preference, skipping IDEA language config');
+function setUiFontFaceStyle(config: UiFontConfig) {
+  let styleElement = document.getElementById(UI_FONT_STYLE_ELEMENT_ID) as HTMLStyleElement | null;
+  if (!styleElement) {
+    styleElement = document.createElement('style');
+    styleElement.id = UI_FONT_STYLE_ELEMENT_ID;
+    document.head.appendChild(styleElement);
+  }
+
+  // Revoke previous blob URL to free memory
+  if (currentFontBlobUrl) {
+    URL.revokeObjectURL(currentFontBlobUrl);
+    currentFontBlobUrl = null;
+  }
+
+  if (!config.fontUrl && (!config.fontBase64 || !config.fontFormat)) {
+    styleElement.textContent = '';
     return;
   }
 
-  // 验证语言代码是否支持
-  const supportedLanguages = ['zh', 'en', 'zh-TW', 'hi', 'es', 'fr', 'ja', 'ru'];
+  const fontFormat = config.fontFormat || 'truetype';
+  let fontSourceUrl = config.fontUrl;
+  if (!fontSourceUrl && config.fontBase64) {
+    fontSourceUrl = createFontBlobUrl(config.fontBase64, fontFormat);
+    currentFontBlobUrl = fontSourceUrl;
+  }
+
+  const familyName = escapeCssFontName('CC GUI Custom');
+  styleElement.textContent =
+    `@font-face { font-family: '${familyName}'; font-style: normal; font-weight: 100 900;` +
+    ` font-display: swap; src: url("${escapeCssUrl(fontSourceUrl || '')}") format('${fontFormat}'); }`;
+}
+
+function syncEffectiveUiFontFamily() {
+  const root = document.documentElement;
+  const shouldFollowEditor =
+    !latestUiFontConfig || latestUiFontConfig.effectiveMode === 'followEditor';
+
+  const sourceConfig = shouldFollowEditor
+    ? latestEditorFontConfig || latestUiFontConfig
+    : latestUiFontConfig;
+
+  if (!sourceConfig) {
+    return;
+  }
+
+  const fontFamilyValue = buildFontFamilyValue({
+    fontFamily: sourceConfig.fontFamily,
+    fallbackFonts: sourceConfig.fallbackFonts ?? latestEditorFontConfig?.fallbackFonts,
+  });
+
+  root.style.setProperty('--cc-gui-ui-font-family', fontFamilyValue);
+  // Keep legacy variable in sync so existing components continue to pick up the effective UI font.
+  root.style.setProperty('--idea-editor-font-family', fontFamilyValue);
+}
+
+function applyEditorTypographyConfig(config: {
+  fontFamily: string;
+  fontSize: number;
+  lineSpacing: number;
+  fallbackFonts?: string[];
+}) {
+  const root = document.documentElement;
+  latestEditorFontConfig = config;
+  root.style.setProperty('--cc-gui-editor-font-family', buildFontFamilyValue(config));
+  root.style.setProperty('--idea-editor-font-size', `${config.fontSize}px`);
+  root.style.setProperty('--idea-editor-line-spacing', String(config.lineSpacing));
+  syncEffectiveUiFontFamily();
+}
+
+function applyUiFontConfig(config: UiFontConfig | string) {
+  const normalizedConfig: UiFontConfig =
+    typeof config === 'string' ? JSON.parse(config) as UiFontConfig : config;
+
+  latestUiFontConfig = normalizedConfig;
+  setUiFontFaceStyle(normalizedConfig);
+  syncEffectiveUiFontFamily();
+}
+
+// Register the applyIdeaFontConfig function
+window.applyIdeaFontConfig = applyEditorTypographyConfig;
+window.applyUiFontConfig = applyUiFontConfig;
+
+// Check for pending font config (Java side may execute before JS)
+if (window.__pendingFontConfig) {
+  debugLog('[Main] Found pending font config, applying...');
+  applyEditorTypographyConfig(window.__pendingFontConfig);
+  delete window.__pendingFontConfig;
+}
+
+if (window.__pendingUiFontConfig) {
+  debugLog('[Main] Found pending UI font config, applying...');
+  applyUiFontConfig(window.__pendingUiFontConfig);
+  delete window.__pendingUiFontConfig;
+}
+
+/**
+ * Apply language configuration to i18n
+ * Supports both direct objects (startup injection) and JSON strings (bridge callbacks).
+ */
+function applyLanguageConfig(rawConfig: { language: string; source?: string; ideaLocale?: string } | string) {
+  let config: { language: string; source?: string; ideaLocale?: string };
+
+  if (typeof rawConfig === 'string') {
+    try {
+      config = JSON.parse(rawConfig) as { language: string; source?: string; ideaLocale?: string };
+    } catch (error) {
+      console.error('[Main] Failed to parse language config:', error, rawConfig);
+      return;
+    }
+  } else {
+    config = rawConfig;
+  }
+
+  const { language, source } = config;
+
+  // Validate that the language code is supported
+  const supportedLanguages = ['zh', 'en', 'zh-TW', 'hi', 'es', 'fr', 'ja', 'ru', 'ko', 'pt-BR'];
   const targetLanguage = supportedLanguages.includes(language) ? language : 'en';
 
-  console.log('[Main] Applying IDEA language config:', config, 'target language:', targetLanguage);
+  debugLog('[Main] Applying language config:', config, 'target language:', targetLanguage, 'source:', source);
 
-  // 切换 i18n 语言
+  const selectionMode = source === 'user' ? 'manual' : 'followIdea';
+
   i18n.changeLanguage(targetLanguage)
     .then(() => {
-      // 保存到 localStorage，以便下次启动时使用
       localStorage.setItem('language', targetLanguage);
-      console.log('[Main] Language changed successfully to:', targetLanguage);
+      localStorage.setItem('languageSelectionMode', selectionMode);
+      // Migrate from legacy 'languageManuallySet' key to 'languageSelectionMode'
+      localStorage.removeItem('languageManuallySet');
+      // Notify subscribers (e.g. AppearanceTab) of the authoritative config so
+      // they can resync even when i18n.language did not change.
+      window.dispatchEvent(new CustomEvent('language-config-applied', {
+        detail: { language: targetLanguage, selectionMode },
+      }));
+      debugLog('[Main] Applied language:', targetLanguage, 'source:', source ?? 'idea');
     })
     .catch((error) => {
       console.error('[Main] Failed to change language:', error);
     });
 }
 
-// 注册 applyIdeaLanguageConfig 函数
+// Register the applyIdeaLanguageConfig function
 window.applyIdeaLanguageConfig = applyLanguageConfig;
 
-// 检查是否有待处理的语言配置（Java 端可能先于 JS 执行）
+// Check for pending language config (Java side may execute before JS)
 if (window.__pendingLanguageConfig) {
-  console.log('[Main] Found pending language config, applying...');
+  debugLog('[Main] Found pending language config, applying...');
   applyLanguageConfig(window.__pendingLanguageConfig);
   delete window.__pendingLanguageConfig;
 }
 
-// 预注册 updateSlashCommands，避免后端调用早于 React 初始化
+// Pre-register updateMessages to handle backend message snapshots that arrive before React initializes
+if (typeof window !== 'undefined' && !window.updateMessages) {
+  debugLog('[Main] Pre-registering updateMessages placeholder');
+  window.updateMessages = (json: string, sequence?: string | number) => {
+    const parsedSequence =
+      typeof sequence === 'number'
+        ? sequence
+        : typeof sequence === 'string' && sequence.trim().length > 0
+          ? Number.parseInt(sequence, 10)
+          : null;
+    window.__pendingUpdateMessages = {
+      json,
+      sequence: Number.isFinite(parsedSequence) ? parsedSequence : null,
+    };
+  };
+}
+
+// Pre-register updateStatus to handle backend status text that arrives before React initializes
+if (typeof window !== 'undefined' && !window.updateStatus) {
+  debugLog('[Main] Pre-registering updateStatus placeholder');
+  window.updateStatus = (text: string) => {
+    window.__pendingStatusText = text;
+  };
+}
+
+// Pre-register showLoading to handle backend loading state that arrives before React initializes
+if (typeof window !== 'undefined' && !window.showLoading) {
+  debugLog('[Main] Pre-registering showLoading placeholder');
+  window.showLoading = (value: string | boolean) => {
+    window.__pendingLoadingState = value === true || value === 'true';
+  };
+}
+
+// Pre-register addUserMessage to handle backend-inserted user messages before React initializes
+if (typeof window !== 'undefined' && !window.addUserMessage) {
+  debugLog('[Main] Pre-registering addUserMessage placeholder');
+  window.addUserMessage = (content: string) => {
+    window.__pendingUserMessage = content;
+  };
+}
+
+// Pre-register showSummary to handle backend summary text that arrives before React initializes
+if (typeof window !== 'undefined' && !window.showSummary) {
+  debugLog('[Main] Pre-registering showSummary placeholder');
+  window.showSummary = (summary: string) => {
+    window.__pendingSummaryText = summary;
+  };
+}
+
+// Pre-register updateSlashCommands to handle backend calls that arrive before React initializes
 if (typeof window !== 'undefined' && !window.updateSlashCommands) {
-  console.log('[Main] Pre-registering updateSlashCommands placeholder');
+  debugLog('[Main] Pre-registering updateSlashCommands placeholder');
   window.updateSlashCommands = (json: string) => {
-    console.log('[Main] Storing pending slash commands, length=' + json.length);
+    debugLog('[Main] Storing pending slash commands, length=' + json.length);
     window.__pendingSlashCommands = json;
   };
 }
 
-// 预注册 setSessionId，避免后端调用早于 React 初始化
-// 这是 rewind 功能所需的会话 ID
-if (typeof window !== 'undefined' && !window.setSessionId) {
-  console.log('[Main] Pre-registering setSessionId placeholder');
-  window.setSessionId = (sessionId: string) => {
-    console.log('[Main] Storing pending session ID:', sessionId);
-    (window as any).__pendingSessionId = sessionId;
+// Pre-register updateDollarCommands to handle backend calls that arrive before React initializes
+if (typeof window !== 'undefined' && !window.updateDollarCommands) {
+  window.updateDollarCommands = (json: string) => {
+    window.__pendingDollarCommands = json;
   };
 }
 
-// 预注册 updateDependencyStatus，避免后端返回状态早于 React 初始化
+// Pre-register setSessionId to handle backend calls that arrive before React initializes.
+// This stores the session ID required by the rewind feature.
+if (typeof window !== 'undefined' && !window.setSessionId) {
+  debugLog('[Main] Pre-registering setSessionId placeholder');
+  window.setSessionId = (sessionId: string) => {
+    debugLog('[Main] Storing pending session ID:', sessionId);
+    window.__pendingSessionId = sessionId;
+  };
+}
+
+// Pre-register updateDependencyStatus to handle backend status responses that arrive before React initializes
 if (typeof window !== 'undefined' && !window.updateDependencyStatus) {
-  console.log('[Main] Pre-registering updateDependencyStatus placeholder');
+  debugLog('[Main] Pre-registering updateDependencyStatus placeholder');
   window.updateDependencyStatus = (json: string) => {
-    console.log('[Main] Storing pending dependency status, length=' + (json ? json.length : 0));
+    debugLog('[Main] Storing pending dependency status, length=' + (json ? json.length : 0));
     window.__pendingDependencyStatus = json;
   };
 }
 
-// 预注册 dependencyUpdateAvailable，避免后端检查更新早于 Settings/React 初始化
+// Pre-register dependencyUpdateAvailable to handle backend update checks that arrive before Settings/React initializes
 if (typeof window !== 'undefined' && !window.dependencyUpdateAvailable) {
-  console.log('[Main] Pre-registering dependencyUpdateAvailable placeholder');
+  debugLog('[Main] Pre-registering dependencyUpdateAvailable placeholder');
   window.dependencyUpdateAvailable = (json: string) => {
-    console.log('[Main] Storing pending dependency updates, length=' + (json ? json.length : 0));
+    debugLog('[Main] Storing pending dependency updates, length=' + (json ? json.length : 0));
     window.__pendingDependencyUpdates = json;
   };
 }
 
-// 预注册 updateStreamingEnabled，避免后端返回状态早于 React 初始化
+// Pre-register updateStreamingEnabled to handle backend status responses that arrive before React initializes
 if (typeof window !== 'undefined' && !window.updateStreamingEnabled) {
-  console.log('[Main] Pre-registering updateStreamingEnabled placeholder');
+  debugLog('[Main] Pre-registering updateStreamingEnabled placeholder');
   window.updateStreamingEnabled = (json: string) => {
-    console.log('[Main] Storing pending streaming enabled status, length=' + (json ? json.length : 0));
+    debugLog('[Main] Storing pending streaming enabled status, length=' + (json ? json.length : 0));
     window.__pendingStreamingEnabled = json;
   };
 }
 
-// 预注册 updateSendShortcut，避免后端返回状态早于 React 初始化
+// Pre-register updateSendShortcut to handle backend status responses that arrive before React initializes
 if (typeof window !== 'undefined' && !window.updateSendShortcut) {
-  console.log('[Main] Pre-registering updateSendShortcut placeholder');
+  debugLog('[Main] Pre-registering updateSendShortcut placeholder');
   window.updateSendShortcut = (json: string) => {
-    console.log('[Main] Storing pending send shortcut status, length=' + (json ? json.length : 0));
+    debugLog('[Main] Storing pending send shortcut status, length=' + (json ? json.length : 0));
     window.__pendingSendShortcut = json;
   };
 }
 
-// 预注册 updateUsageStatistics，避免后端返回状态早于 Settings/UsageStatisticsSection 初始化
+// Pre-register updatePermissionDialogTimeout to handle backend responses that arrive before React initializes
+if (typeof window !== 'undefined' && !window.updatePermissionDialogTimeout) {
+  debugLog('[Main] Pre-registering updatePermissionDialogTimeout placeholder');
+  window.updatePermissionDialogTimeout = (json: string) => {
+    debugLog('[Main] Storing pending permission dialog timeout, length=' + (json ? json.length : 0));
+    window.__pendingPermissionDialogTimeout = json;
+  };
+}
+
+// Pre-register updateUsageStatistics to handle backend status responses that arrive before Settings/UsageStatisticsSection initializes
 if (typeof window !== 'undefined' && !window.updateUsageStatistics) {
-  console.log('[Main] Pre-registering updateUsageStatistics placeholder');
+  debugLog('[Main] Pre-registering updateUsageStatistics placeholder');
   window.updateUsageStatistics = (json: string) => {
-    console.log('[Main] Storing pending usage statistics, length=' + (json ? json.length : 0));
+    debugLog('[Main] Storing pending usage statistics, length=' + (json ? json.length : 0));
     window.__pendingUsageStatistics = json;
   };
 }
 
+// Pre-register onModeReceived to avoid losing early backend push before React callbacks are ready.
+if (typeof window !== 'undefined' && !window.onModeReceived) {
+  debugLog('[Main] Pre-registering onModeReceived placeholder');
+  window.onModeReceived = (mode: string) => {
+    debugLog('[Main] Storing pending mode:', mode);
+    window.__pendingModeReceived = mode;
+  };
+}
+
 if (typeof window !== 'undefined' && !window.showPermissionDialog) {
-  console.log('[Main] Pre-registering showPermissionDialog placeholder');
+  debugLog('[Main] Pre-registering showPermissionDialog placeholder');
   window.showPermissionDialog = (json: string) => {
     const pending = window.__pendingPermissionDialogRequests || [];
     pending.push(json);
@@ -369,7 +592,7 @@ if (typeof window !== 'undefined' && !window.showPermissionDialog) {
 }
 
 if (typeof window !== 'undefined' && !window.showAskUserQuestionDialog) {
-  console.log('[Main] Pre-registering showAskUserQuestionDialog placeholder');
+  debugLog('[Main] Pre-registering showAskUserQuestionDialog placeholder');
   window.showAskUserQuestionDialog = (json: string) => {
     const pending = window.__pendingAskUserQuestionDialogRequests || [];
     pending.push(json);
@@ -378,7 +601,7 @@ if (typeof window !== 'undefined' && !window.showAskUserQuestionDialog) {
 }
 
 if (typeof window !== 'undefined' && !window.showPlanApprovalDialog) {
-  console.log('[Main] Pre-registering showPlanApprovalDialog placeholder');
+  debugLog('[Main] Pre-registering showPlanApprovalDialog placeholder');
   window.showPlanApprovalDialog = (json: string) => {
     const pending = window.__pendingPlanApprovalDialogRequests || [];
     pending.push(json);
@@ -386,15 +609,29 @@ if (typeof window !== 'undefined' && !window.showPlanApprovalDialog) {
   };
 }
 
-// 渲染 React 应用
+if (typeof window !== 'undefined') {
+  window.updateLinkifyCapabilities = (json: string) => {
+    applyLinkifyCapabilitiesPayload(json);
+  };
+}
+
+// Render the React application
 ReactDOM.createRoot(document.getElementById('app') as HTMLElement).render(
   <ErrorBoundary>
-    <App />
+    <UIStateProvider>
+      <SessionProvider>
+        <MessagesProvider>
+          <DialogProvider>
+            <App />
+          </DialogProvider>
+        </MessagesProvider>
+      </SessionProvider>
+    </UIStateProvider>
   </ErrorBoundary>,
 );
 
 /**
- * 等待 sendToJava 桥接函数可用
+ * Wait for the sendToJava bridge function to become available
  */
 setupScaleRecovery();
 
@@ -404,7 +641,7 @@ function waitForBridge(callback: () => void, maxAttempts = 50, interval = 100) {
   const check = () => {
     attempts++;
     if (window.sendToJava) {
-      console.log('[Main] Bridge available after ' + attempts + ' attempts');
+      debugLog('[Main] Bridge available after ' + attempts + ' attempts');
       callback();
     } else if (attempts < maxAttempts) {
       setTimeout(check, interval);
@@ -416,19 +653,22 @@ function waitForBridge(callback: () => void, maxAttempts = 50, interval = 100) {
   check();
 }
 
-// 等待桥接可用后，初始化斜杠命令
+// Once the bridge is available, initialize slash commands
 waitForBridge(() => {
-  console.log('[Main] Bridge ready, setting up slash commands');
+  debugLog('[Main] Bridge ready, setting up slash commands');
   setupSlashCommandsCallback();
+  setupDollarCommandsCallback();
   startBridgeHeartbeat();
 
-  console.log('[Main] Sending frontend_ready signal');
+  debugLog('[Main] Sending frontend_ready signal');
   sendBridgeEvent('frontend_ready');
 
-  console.log('[Main] Sending refresh_slash_commands request');
+  debugLog('[Main] Sending refresh_slash_commands request');
   sendBridgeEvent('refresh_slash_commands');
 
   // Ensure SDK dependency status is fetched on initial load (not only after opening Settings).
-  console.log('[Main] Requesting dependency status');
+  debugLog('[Main] Requesting dependency status');
   sendBridgeEvent('get_dependency_status');
+
+  sendBridgeEvent('get_linkify_capabilities');
 });

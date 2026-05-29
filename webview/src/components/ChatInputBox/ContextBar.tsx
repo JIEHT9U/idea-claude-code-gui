@@ -1,8 +1,19 @@
-import React, { useRef, useCallback, memo } from 'react';
+import React, { useRef, useState, useEffect, useCallback, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getFileIcon } from '../../utils/fileIcons';
 import { TokenIndicator } from './TokenIndicator';
 import type { SelectedAgent } from './types';
+
+const HIDDEN_INPUT_STYLE: React.CSSProperties = { display: 'none' };
+const CURSOR_DEFAULT_STYLE: React.CSSProperties = { cursor: 'default' };
+const ROBOT_ICON_STYLE: React.CSSProperties = { marginRight: 4 };
+const FILE_ICON_STYLE: React.CSSProperties = {
+  marginRight: 4,
+  display: 'inline-flex',
+  alignItems: 'center',
+  width: 16,
+  height: 16,
+};
 
 interface ContextBarProps {
   activeFile?: string;
@@ -25,6 +36,10 @@ interface ContextBarProps {
   statusPanelExpanded?: boolean;
   /** Toggle StatusPanel expand/collapse */
   onToggleStatusPanel?: () => void;
+  /** Whether auto open file is enabled */
+  autoOpenFileEnabled?: boolean;
+  /** Callback to enable file context (called from placeholder click) */
+  onRequestEnableFileContext?: () => void;
 }
 
 export const ContextBar: React.FC<ContextBarProps> = memo(({
@@ -43,9 +58,41 @@ export const ContextBar: React.FC<ContextBarProps> = memo(({
   onRewind,
   statusPanelExpanded = true,
   onToggleStatusPanel,
+  autoOpenFileEnabled = false,
+  onRequestEnableFileContext,
 }) => {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [showEnablePopover, setShowEnablePopover] = useState(false);
+
+  // Reset popover state when autoOpenFileEnabled changes
+  useEffect(() => {
+    if (autoOpenFileEnabled) {
+      setShowEnablePopover(false);
+    }
+  }, [autoOpenFileEnabled]);
+
+  // Click outside or Escape to close popover
+  useEffect(() => {
+    if (!showEnablePopover) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setShowEnablePopover(false);
+      }
+    };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowEnablePopover(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [showEnablePopover]);
 
   const handleAttachClick = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -59,6 +106,22 @@ export const ContextBar: React.FC<ContextBarProps> = memo(({
     }
     e.target.value = '';
   }, [onAddAttachment]);
+
+  const handlePlaceholderClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowEnablePopover(true);
+  }, []);
+
+  const handlePopoverCancel = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowEnablePopover(false);
+  }, []);
+
+  const handlePopoverConfirm = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowEnablePopover(false);
+    onRequestEnableFileContext?.();
+  }, [onRequestEnableFileContext]);
 
   // Extract filename from path
   const getFileName = (path: string) => {
@@ -110,7 +173,7 @@ export const ContextBar: React.FC<ContextBarProps> = memo(({
           multiple
           className="hidden-file-input"
           onChange={handleFileChange}
-          style={{ display: 'none' }}
+          style={HIDDEN_INPUT_STYLE}
         />
         
         <div className="context-tool-divider" />
@@ -118,14 +181,14 @@ export const ContextBar: React.FC<ContextBarProps> = memo(({
 
       {/* Selected Agent Chip */}
       {selectedAgent && (
-        <div 
-          className="context-item has-tooltip" 
+        <div
+          className="context-item has-tooltip"
           data-tooltip={selectedAgent.name}
-          style={{ cursor: 'default' }}
+          style={CURSOR_DEFAULT_STYLE}
         >
-          <span 
-            className="codicon codicon-robot" 
-            style={{ marginRight: 4 }}
+          <span
+            className="codicon codicon-robot"
+            style={ROBOT_ICON_STYLE}
           />
           <span className="context-text">
             <span dir="ltr">
@@ -142,23 +205,17 @@ export const ContextBar: React.FC<ContextBarProps> = memo(({
         </div>
       )}
 
-      {/* Active Context Chip */}
-      {displayText && (
+      {/* Active Context Chip or Empty Placeholder */}
+      {displayText ? (
         <div
           className="context-item has-tooltip"
           data-tooltip={fullDisplayText}
-          style={{ cursor: 'default' }}
+          style={CURSOR_DEFAULT_STYLE}
         >
           {activeFile && (
             <span
               className="context-file-icon"
-              style={{
-                marginRight: 4,
-                display: 'inline-flex',
-                alignItems: 'center',
-                width: 16,
-                height: 16
-              }}
+              style={FILE_ICON_STYLE}
               dangerouslySetInnerHTML={{ __html: getFileIconSvg(activeFile) }}
             />
           )}
@@ -170,6 +227,39 @@ export const ContextBar: React.FC<ContextBarProps> = memo(({
             onClick={onClearFile}
             title="Remove file context"
           />
+        </div>
+      ) : !autoOpenFileEnabled && (
+        <div className="context-file-placeholder-wrapper" ref={popoverRef}>
+          <button
+            className="context-file-placeholder"
+            onClick={handlePlaceholderClick}
+            title={t('fileContext.placeholder')}
+            type="button"
+          >
+            <span className="codicon codicon-file" />
+            <span className="placeholder-text">{t('fileContext.placeholder')}</span>
+          </button>
+
+          {showEnablePopover && (
+            <div className="file-context-confirm-popover">
+              <div className="popover-title">{t('fileContext.enableTitle')}</div>
+              <div className="popover-description">{t('fileContext.enableDescription')}</div>
+              <div className="popover-actions">
+                <button
+                  className="popover-btn popover-btn-cancel"
+                  onClick={handlePopoverCancel}
+                >
+                  {t('fileContext.cancel')}
+                </button>
+                <button
+                  className="popover-btn popover-btn-confirm"
+                  onClick={handlePopoverConfirm}
+                >
+                  {t('fileContext.enable')}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

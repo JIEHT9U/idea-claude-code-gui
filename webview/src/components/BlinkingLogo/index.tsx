@@ -1,32 +1,45 @@
 import { useEffect, useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Claude, OpenAI, Gemini } from '@lobehub/icons';
 import styles from './style.module.less';
 import { AVAILABLE_PROVIDERS } from '../ChatInputBox/types';
+import { ProviderModelIcon } from '../shared/ProviderModelIcon';
+
+const ROOT_STYLE: React.CSSProperties = {
+  position: 'relative',
+  display: 'inline-flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+};
+
+const DROPDOWN_STYLE: React.CSSProperties = {
+  position: 'absolute',
+  top: '100%',
+  left: '50%',
+  transform: 'translateX(-50%)',
+  marginTop: '8px',
+  zIndex: 10000,
+};
+
+function getProviderOptionStyle(enabled: boolean): React.CSSProperties {
+  return {
+    opacity: enabled ? 1 : 0.5,
+    cursor: enabled ? 'pointer' : 'not-allowed',
+  };
+}
 
 interface BlinkingLogoProps {
   provider: string;
+  /** Current model ID, used to show vendor-specific icon */
+  modelId?: string;
   onProviderChange?: (providerId: string) => void;
 }
 
-const ProviderIcon = ({ providerId, size = 16, colored = false }: { providerId: string; size?: number; colored?: boolean }) => {
-  switch (providerId) {
-    case 'claude':
-      return colored ? <Claude.Color size={size} /> : <Claude.Avatar size={size} />;
-    case 'codex':
-      return <OpenAI.Avatar size={size} />;
-    case 'gemini':
-      return colored ? <Gemini.Color size={size} /> : <Gemini.Avatar size={size} />;
-    default:
-      return colored ? <Claude.Color size={size} /> : <Claude.Avatar size={size} />;
-  }
-};
-
-export const BlinkingLogo = ({ provider, onProviderChange }: BlinkingLogoProps) => {
+export const BlinkingLogo = ({ provider, modelId, onProviderChange }: BlinkingLogoProps) => {
   const { t } = useTranslation();
   const [displayProvider, setDisplayProvider] = useState(provider);
+  const [displayModelId, setDisplayModelId] = useState(modelId);
   const [animationState, setAnimationState] = useState<'idle' | 'closing' | 'opening'>('idle');
-  
+
   // Dropdown state
   const [isOpen, setIsOpen] = useState(false);
   const [showToast, setShowToast] = useState(false);
@@ -35,25 +48,24 @@ export const BlinkingLogo = ({ provider, onProviderChange }: BlinkingLogoProps) 
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (provider !== displayProvider) {
+    if (provider !== displayProvider || modelId !== displayModelId) {
       if (animationState === 'idle') {
         setAnimationState('closing');
       } else if (animationState === 'opening') {
-         // If we are opening and provider changes again, we should probably close again.
          setAnimationState('closing');
       }
-      // If already closing, do nothing, let it finish closing.
     }
-  }, [provider, displayProvider, animationState]);
+  }, [provider, modelId, displayProvider, displayModelId, animationState]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
-    
+
     if (animationState === 'closing') {
       timer = setTimeout(() => {
         setDisplayProvider(provider);
+        setDisplayModelId(modelId);
         setAnimationState('opening');
-      }, 200); // Match CSS transition duration
+      }, 200);
     } else if (animationState === 'opening') {
       timer = setTimeout(() => {
         setAnimationState('idle');
@@ -63,7 +75,7 @@ export const BlinkingLogo = ({ provider, onProviderChange }: BlinkingLogoProps) 
     return () => {
       if (timer) clearTimeout(timer);
     };
-  }, [animationState, provider]);
+  }, [animationState, provider, modelId]);
 
   // Click outside handler
   useEffect(() => {
@@ -91,9 +103,6 @@ export const BlinkingLogo = ({ provider, onProviderChange }: BlinkingLogoProps) 
     }
   };
 
-  /**
-   * Show toast message
-   */
   const showToastMessage = (message: string) => {
     setToastMessage(message);
     setShowToast(true);
@@ -122,33 +131,31 @@ export const BlinkingLogo = ({ provider, onProviderChange }: BlinkingLogoProps) 
     return t(`providers.${providerId}.label`);
   };
 
+  const logoStyle: React.CSSProperties = {
+    cursor: onProviderChange ? 'pointer' : 'default',
+  };
+
   return (
-    <div style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
-      <div 
+    <div style={ROOT_STYLE}>
+      <div
         ref={containerRef}
         className={`${styles.container} ${styles[animationState]}`}
         onClick={handleToggle}
-        style={{ cursor: onProviderChange ? 'pointer' : 'default' }}
+        style={logoStyle}
       >
-        {displayProvider === 'codex' ? (
-          <OpenAI.Avatar size={64} />
-        ) : (
-          <Claude.Color size={58} />
-        )}
+        <ProviderModelIcon
+          providerId={displayProvider}
+          modelId={displayModelId}
+          size={displayProvider === 'codex' ? 64 : 58}
+          colored
+        />
       </div>
-      
+
       {isOpen && (
         <div
           ref={dropdownRef}
           className="selector-dropdown"
-          style={{
-            position: 'absolute',
-            top: '100%',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            marginTop: '8px',
-            zIndex: 10000,
-          }}
+          style={DROPDOWN_STYLE}
         >
           {AVAILABLE_PROVIDERS.map((p) => (
             <div
@@ -158,12 +165,9 @@ export const BlinkingLogo = ({ provider, onProviderChange }: BlinkingLogoProps) 
                 e.stopPropagation();
                 handleSelect(p.id);
               }}
-              style={{
-                opacity: p.enabled ? 1 : 0.5,
-                cursor: p.enabled ? 'pointer' : 'not-allowed',
-              }}
+              style={getProviderOptionStyle(!!p.enabled)}
             >
-              <ProviderIcon providerId={p.id} size={16} colored={true} />
+              <ProviderModelIcon providerId={p.id} size={16} colored />
               <span>{getProviderLabel(p.id)}</span>
               {p.id === provider && (
                 <span className="codicon codicon-check check-mark" />

@@ -4,6 +4,7 @@ import type { PermissionRequest } from '../components/PermissionDialog';
 import type { AskUserQuestionRequest } from '../components/AskUserQuestionDialog';
 import type { PlanApprovalRequest } from '../components/PlanApprovalDialog';
 import type { RewindRequest } from '../components/RewindDialog';
+import type { ContextUsageData } from '../components/ContextUsageDialog';
 import { sendBridgeEvent } from '../utils/bridge';
 
 interface UseDialogManagementOptions {
@@ -44,6 +45,14 @@ interface UseDialogManagementReturn {
   // Rewind select dialog
   rewindSelectDialogOpen: boolean;
   setRewindSelectDialogOpen: (open: boolean) => void;
+
+  // Context usage dialog
+  contextUsageDialogOpen: boolean;
+  contextUsageIsLoading: boolean;
+  contextUsageData: ContextUsageData | null;
+  openContextUsageDialog: (requestId?: string | null, loading?: boolean) => void;
+  updateContextUsageData: (requestId: string | null | undefined, data: ContextUsageData) => boolean;
+  closeContextUsageDialog: (requestId?: string | null) => boolean;
 }
 
 /**
@@ -79,6 +88,12 @@ export function useDialogManagement({ t }: UseDialogManagementOptions): UseDialo
   // Rewind select dialog state
   const [rewindSelectDialogOpen, setRewindSelectDialogOpen] = useState(false);
 
+  // Context usage dialog state
+  const [contextUsageDialogOpen, setContextUsageDialogOpen] = useState(false);
+  const [contextUsageIsLoading, setContextUsageIsLoading] = useState(false);
+  const [contextUsageData, setContextUsageData] = useState<ContextUsageData | null>(null);
+  const contextUsageRequestIdRef = useRef<string | null>(null);
+
   // Sync refs with state
   useEffect(() => {
     permissionDialogOpenRef.current = permissionDialogOpen;
@@ -97,6 +112,19 @@ export function useDialogManagement({ t }: UseDialogManagementOptions): UseDialo
 
   // Open permission dialog
   const openPermissionDialog = useCallback((request: PermissionRequest) => {
+    // If a permission dialog is currently open, enqueue the new request instead of overriding.
+    // This avoids losing follow-up requests when the user denies the current one.
+    if (permissionDialogOpenRef.current || currentPermissionRequestRef.current) {
+      const currentId = currentPermissionRequestRef.current?.channelId;
+      const alreadyQueued = pendingPermissionRequestsRef.current.some(
+        (item) => item.channelId === request.channelId
+      );
+      if (request.channelId !== currentId && !alreadyQueued) {
+        pendingPermissionRequestsRef.current.push(request);
+      }
+      return;
+    }
+
     currentPermissionRequestRef.current = request;
     permissionDialogOpenRef.current = true;
     setCurrentPermissionRequest(request);
@@ -105,6 +133,19 @@ export function useDialogManagement({ t }: UseDialogManagementOptions): UseDialo
 
   // Open ask user question dialog
   const openAskUserQuestionDialog = useCallback((request: AskUserQuestionRequest) => {
+    // If an ask user question dialog is currently open, enqueue the new request instead of overriding.
+    // This avoids losing follow-up requests when multiple questions arrive in quick succession.
+    if (askUserQuestionDialogOpenRef.current || currentAskUserQuestionRequestRef.current) {
+      const currentId = currentAskUserQuestionRequestRef.current?.requestId;
+      const alreadyQueued = pendingAskUserQuestionRequestsRef.current.some(
+        (item) => item.requestId === request.requestId
+      );
+      if (request.requestId !== currentId && !alreadyQueued) {
+        pendingAskUserQuestionRequestsRef.current.push(request);
+      }
+      return;
+    }
+
     currentAskUserQuestionRequestRef.current = request;
     askUserQuestionDialogOpenRef.current = true;
     setCurrentAskUserQuestionRequest(request);
@@ -113,6 +154,19 @@ export function useDialogManagement({ t }: UseDialogManagementOptions): UseDialo
 
   // Open plan approval dialog
   const openPlanApprovalDialog = useCallback((request: PlanApprovalRequest) => {
+    // If a plan approval dialog is currently open, enqueue the new request instead of overriding.
+    // This avoids losing follow-up requests when multiple plan approval requests arrive in quick succession.
+    if (planApprovalDialogOpenRef.current || currentPlanApprovalRequestRef.current) {
+      const currentId = currentPlanApprovalRequestRef.current?.requestId;
+      const alreadyQueued = pendingPlanApprovalRequestsRef.current.some(
+        (item) => item.requestId === request.requestId
+      );
+      if (request.requestId !== currentId && !alreadyQueued) {
+        pendingPlanApprovalRequestsRef.current.push(request);
+      }
+      return;
+    }
+
     currentPlanApprovalRequestRef.current = request;
     planApprovalDialogOpenRef.current = true;
     setCurrentPlanApprovalRequest(request);
@@ -158,6 +212,9 @@ export function useDialogManagement({ t }: UseDialogManagementOptions): UseDialo
       rejectMessage: null,
     });
     sendBridgeEvent('permission_decision', payload);
+    pendingPermissionRequestsRef.current = pendingPermissionRequestsRef.current.filter(
+      (item) => item.channelId !== channelId
+    );
     permissionDialogOpenRef.current = false;
     currentPermissionRequestRef.current = null;
     setPermissionDialogOpen(false);
@@ -172,6 +229,9 @@ export function useDialogManagement({ t }: UseDialogManagementOptions): UseDialo
       rejectMessage: null,
     });
     sendBridgeEvent('permission_decision', payload);
+    pendingPermissionRequestsRef.current = pendingPermissionRequestsRef.current.filter(
+      (item) => item.channelId !== channelId
+    );
     permissionDialogOpenRef.current = false;
     currentPermissionRequestRef.current = null;
     setPermissionDialogOpen(false);
@@ -186,6 +246,9 @@ export function useDialogManagement({ t }: UseDialogManagementOptions): UseDialo
       rejectMessage: t('permission.userDenied'),
     });
     sendBridgeEvent('permission_decision', payload);
+    pendingPermissionRequestsRef.current = pendingPermissionRequestsRef.current.filter(
+      (item) => item.channelId !== channelId
+    );
     permissionDialogOpenRef.current = false;
     currentPermissionRequestRef.current = null;
     setPermissionDialogOpen(false);
@@ -244,6 +307,41 @@ export function useDialogManagement({ t }: UseDialogManagementOptions): UseDialo
     setCurrentPlanApprovalRequest(null);
   }, []);
 
+  // Context usage dialog handlers
+  const isCurrentContextUsageRequest = useCallback((requestId?: string | null) => {
+    if (requestId == null || requestId === '') {
+      return true;
+    }
+    return contextUsageRequestIdRef.current === requestId;
+  }, []);
+
+  const openContextUsageDialog = useCallback((requestId?: string | null, loading = true) => {
+    contextUsageRequestIdRef.current = requestId ?? null;
+    setContextUsageData(null);
+    setContextUsageIsLoading(loading);
+    setContextUsageDialogOpen(true);
+  }, []);
+
+  const updateContextUsageData = useCallback((requestId: string | null | undefined, data: ContextUsageData) => {
+    if (!isCurrentContextUsageRequest(requestId)) {
+      return false;
+    }
+    setContextUsageIsLoading(false);
+    setContextUsageData(data);
+    return true;
+  }, [isCurrentContextUsageRequest]);
+
+  const closeContextUsageDialog = useCallback((requestId?: string | null) => {
+    if (!isCurrentContextUsageRequest(requestId)) {
+      return false;
+    }
+    contextUsageRequestIdRef.current = null;
+    setContextUsageDialogOpen(false);
+    setContextUsageIsLoading(false);
+    setContextUsageData(null);
+    return true;
+  }, [isCurrentContextUsageRequest]);
+
   return {
     // Permission dialog
     permissionDialogOpen,
@@ -278,5 +376,13 @@ export function useDialogManagement({ t }: UseDialogManagementOptions): UseDialo
     // Rewind select dialog
     rewindSelectDialogOpen,
     setRewindSelectDialogOpen,
+
+    // Context usage dialog
+    contextUsageDialogOpen,
+    contextUsageIsLoading,
+    contextUsageData,
+    openContextUsageDialog,
+    updateContextUsageData,
+    closeContextUsageDialog,
   };
 }

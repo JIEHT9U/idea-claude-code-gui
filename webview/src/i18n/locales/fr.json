@@ -80,20 +80,36 @@
     "disabled": "Désactivé",
     "sdkNotInstalled": "{{provider}} SDK n'est pas installé. Veuillez installer le SDK pour commencer à discuter.",
     "sdkStatusLoading": "Checking SDK status...",
-    "openSourceBanner": "Ce projet est garanti 100% open source pour toujours. N'hésitez pas à l'utiliser !",
+    "openSourceBanner": "Ce projet est garanti 100% open source (méfiez-vous des projets piratés)",
     "goInstallSdk": "Aller installer",
     "commandNotImplemented": "La fonctionnalité `{{command}}` n'est pas encore implémentée.",
     "clearCommandDescription": "Effacer l'historique et démarrer une nouvelle session",
     "attachmentFile": "[Pièce jointe: {{fileName}}]",
     "unknownFile": "Unknown file",
     "attachmentsUploaded": "[Pièces jointes téléchargées]",
-    "streamingConnected": "Claude connecté, en train de comprendre votre question"
+    "streamingConnected": "{{provider}} connecté, en train de comprendre votre question",
+    "showEarlierMessages": "Afficher {{count}} messages précédents",
+    "totalDuration": "Cette réponse a pris",
+    "compactSummary": {
+      "summarizedConversation": "Conversation résumée",
+      "compactSummary": "Résumé compact",
+      "messagesUpTo": "{{count}} messages résumés jusqu'à ce point",
+      "messagesFrom": "{{count}} messages résumés à partir de ce point",
+      "userContext": "Contexte : « {{context}} »",
+      "expand": "Développer le résumé",
+      "collapse": "Réduire le résumé"
+    }
   },
   "settings": {
     "title": "Paramètres",
     "basic": {
       "title": "Configuration de base",
       "description": "Configurer le thème de la page, la langue et l'environnement d'exécution Node.js",
+      "tabs": {
+        "appearance": "Apparence",
+        "behavior": "Comportement",
+        "environment": "Environnement"
+      },
       "theme": {
         "label": "Thème de l'interface",
         "system": "Suivre l'IDE",
@@ -105,6 +121,7 @@
       },
       "language": {
         "label": "Langue de l'interface",
+        "followIde": "Suivre l'IDE",
         "simplifiedChinese": "简体中文",
         "traditionalChinese": "繁體中文",
         "english": "English",
@@ -112,7 +129,9 @@
         "spanish": "Español",
         "french": "Français",
         "japanese": "日本語",
-        "russian": "Русский"
+        "russian": "Русский",
+        "korean": "한국어",
+        "portuguese": "Português (Brasil)"
       },
       "nodePath": {
         "label": "Chemin Node.js",
@@ -137,8 +156,16 @@
         "level6": "Maximale (140%)"
       },
       "editorFont": {
-        "label": "Police (suit la police de l'éditeur)",
-        "hint": "Non modifiable ici. Pour modifier, allez dans Paramètres IDEA → Éditeur → Police (redémarrez IDEA pour que la police du plugin prenne effet)"
+        "label": "Police",
+        "hint": "Ici vous changez la police de l'interface du plugin ; la taille et l'interligne suivent toujours l'éditeur.",
+        "followOption": "Suivre l'éditeur ({{font}})",
+        "customOption": "Fichier de police personnalisé",
+        "customPathLabel": "Chemin du fichier de police",
+        "customPathPlaceholder": "Choisissez ou saisissez le chemin d'un fichier .ttf / .otf",
+        "browse": "Parcourir",
+        "warningUnavailable": "La police est indisponible, la police de l'éditeur est utilisée",
+        "statusFollowEditor": "Police actuelle de l'éditeur : {{font}}",
+        "statusCustom": "Police personnalisée actuellement utilisée : {{font}}"
       },
       "streaming": {
         "label": "Streaming",
@@ -147,10 +174,36 @@
         "hint": "When enabled, AI responses will appear character by character in real-time, instead of waiting for the complete response. May consume more resources."
       },
       "autoOpenFile": {
-        "label": "Auto Open File",
-        "enabled": "Enabled",
-        "disabled": "Disabled",
-        "hint": "When enabled, files will automatically open in the editor when selected in the project tree. When disabled, manual action is required to open files."
+        "label": "Envoyer le chemin du fichier ouvert",
+        "enabled": "Activé",
+        "disabled": "Désactivé",
+        "hint": "Lorsqu'activé, sélectionner un fichier dans l'arborescence du projet enverra automatiquement son chemin à l'AI (note : seul le chemin du fichier est envoyé, pas son contenu). Lorsque désactivé, une action manuelle est requise."
+      },
+      "promptEnhancer": {
+        "label": "Prompt Enhancer",
+        "modelLabel": "Enhancer Model",
+        "resetToDefault": "Restore Default",
+        "providerAvailable": "Available",
+        "providerUnavailable": "Currently unavailable",
+        "provider": {
+          "claude": "Claude Code",
+          "codex": "Codex"
+        },
+        "currentProviderAuto": "Currently using automatic selection: {{provider}}",
+        "currentProviderManual": "Currently using manually selected provider: {{provider}}",
+        "currentProviderUnavailable": "The selected provider is currently unavailable: {{provider}}"
+      },
+      "diffExpanded": {
+        "label": "Développer les différences par défaut",
+        "enabled": "Développé",
+        "disabled": "Réduit",
+        "hint": "Lorsque activé, les différences de code dans le chat seront développées par défaut. Lorsque désactivé, les différences commencent réduites."
+      },
+      "taskCompletionNotification": {
+        "label": "Notification de fin de tâche",
+        "enabled": "Activé",
+        "disabled": "Désactivé",
+        "hint": "Lorsque activé, affiche une notification système lorsque la tâche AI est terminée. Lorsque désactivé, aucune notification apparaît."
       },
       "sendShortcut": {
         "label": "Raccourci d'envoi",
@@ -159,11 +212,22 @@
         "cmdEnter": "⌘/Ctrl+Entrée pour envoyer",
         "cmdEnterDesc": "Appuyez sur ⌘/Ctrl+Entrée pour envoyer le message, Entrée pour nouvelle ligne"
       },
+      "permissionDialogTimeout": {
+        "label": "Délai d'expiration des dialogues de permission et de question",
+        "unit": "secondes",
+        "hint": "Définissez le délai d'expiration pour les dialogues de questions de Claude et les dialogues de demande de permission (30~3600 secondes). Après expiration, le dialogue se fermera automatiquement et Claude continuera."
+      },
       "chatBgColor": {
         "label": "Couleur de fond du chat",
         "custom": "Personnalisé",
         "reset": "Réinitialiser",
         "hint": "Personnaliser la couleur de fond de la zone de chat. Laisser vide pour suivre le thème par défaut."
+      },
+      "userMsgColor": {
+        "label": "Couleur des messages",
+        "custom": "Personnalisé",
+        "reset": "Réinitialiser",
+        "hint": "Personnaliser la couleur de fond de vos messages. Laisser vide pour suivre le thème par défaut."
       }
     },
     "providers": "Gestion des fournisseurs",
@@ -172,12 +236,18 @@
       "claude": "Claude Code",
       "codex": "Codex"
     },
+    "pluginModels": {
+      "title": "Modèles personnalisés",
+      "description": "Les modèles personnalisés ajoutés ici seront visibles sous tous les fournisseurs, affichés en haut de la liste de sélection de modèles",
+      "dialogTitle": "Gérer les modèles personnalisés",
+      "manage": "Gérer les modèles"
+    },
     "dependencies": "Dépendances SDK",
     "dependenciesDesc": "Gérer les installations et mises à jour des dépendances AI SDK",
     "dependency": {
       "title": "Gestion des dépendances SDK",
       "description": "Gérer les dépendances AI SDK. Installez le SDK requis avant la première utilisation.",
-      "installPolicyTip": "Pour réduire la taille du package, les SDKs doivent maintenant être installés manuellement",
+      "installPolicyTip": "Problème d'installation ? Copiez l'erreur vers un CLI AI terminal pour résoudre",
       "claudeSdkName": "Claude Code SDK",
       "claudeSdkDescription": "Requis pour les fonctionnalités Claude AI. Inclut Claude Code SDK et les dépendances associées.",
       "codexSdkName": "Codex SDK",
@@ -195,7 +265,9 @@
       "installSuccess": "{{name}} installé avec succès",
       "installFailed": "Échec de l'installation: {{error}}",
       "uninstallSuccess": "{{name}} a été désinstallé",
-      "uninstallFailed": "Échec de la désinstallation: {{error}}"
+      "uninstallFailed": "Échec de la désinstallation: {{error}}",
+      "updating": "Mise à jour...",
+      "updateSuccess": "{{name}} mis à jour avec succès"
     },
     "usage": "Statistiques d'utilisation",
     "usageDesc": "Afficher votre consommation de Token, statistiques de coûts et analyse des tendances d'utilisation",
@@ -203,13 +275,32 @@
     "mcpDesc": "Configurer et gérer les serveurs Model Context Protocol",
     "permissions": "Permissions",
     "permissionsDesc": "Gérer les permissions d'accès et d'opération de fichiers de Claude Code",
+    "promptEnhancer": {
+      "title": "Prompt Enhancer",
+      "description": "Choose which provider and model should be used when enhancing prompts before sending them."
+    },
     "commit": {
       "title": "Commit AI",
       "description": "Configure AI-generated Git commit message behavior",
+      "providerModel": {
+        "label": "Fournisseur du modèle de commit",
+        "modelLabel": "Modèle de commit",
+        "resetToDefault": "Réinitialiser",
+        "providerAvailable": "Disponible",
+        "providerUnavailable": "Non disponible",
+        "currentProviderAuto": "Utilise actuellement la sélection automatique : {{provider}}",
+        "currentProviderManual": "Utilise actuellement le fournisseur sélectionné manuellement : {{provider}}",
+        "currentProviderUnavailable": "Le fournisseur sélectionné n'est actuellement pas disponible : {{provider}}"
+      },
       "prompt": {
         "label": "Additional Prompt",
         "placeholder": "Add your extra requirements here, e.g., generate commit in English, include issue number, etc...",
         "hint": "The plugin has built-in CCG Commits specification prompts. Content you add here will be used as additional requirements, and AI will prioritize your instructions."
+      },
+      "projectPrompt": {
+        "label": "Prompt supplémentaire spécifique au projet",
+        "placeholder": "Ajoutez ici les exigences spécifiques au projet, par exemple : le scope doit utiliser le nom du module, le body du commit doit inclure la portée de l'impact, etc...",
+        "hint": "Ce prompt s'applique uniquement au projet actuel et est combiné avec le prompt supplémentaire global. En cas de conflit, le prompt du projet prévaut. Les différents projets peuvent être configurés indépendamment."
       },
       "codeReview": {
         "comingSoon": "Coming Soon",
@@ -260,6 +351,12 @@
           "minutesAgo_other": "il y a {{count}} minutes",
           "justNow": "à l'instant"
         }
+      },
+      "aiTitleGeneration": {
+        "label": "Génération automatique du titre de session par IA",
+        "enabled": "Activé",
+        "disabled": "Désactivé",
+        "hint": "Lorsqu'activé, un titre court généré par Haiku est créé après le premier tour d'une nouvelle session. Désactivé, le premier message de l'utilisateur reste le titre."
       }
     },
     "codexFeatureUnavailable": "Cette section des paramètres n'est pas encore disponible dans Codex. Passez à Claude Code.",
@@ -271,6 +368,11 @@
     "communityDesc": "Scannez le code QR ci-dessous pour rejoindre le groupe WeChat officiel pour obtenir les dernières nouvelles et le support technique",
     "communityQrTip": "Scannez avec WeChat pour rejoindre la communauté",
     "communityQrAlt": "Code QR de la communauté WeChat officielle",
+    "githubTitle": "Dépôt GitHub",
+    "githubDesc": "Ce projet est open source sur GitHub. Mettez une étoile pour nous soutenir !",
+    "githubCopyBtn": "Copier l'URL du dépôt",
+    "githubCopied": "URL du dépôt copiée dans le presse-papiers. Veuillez l'ouvrir dans votre navigateur.",
+    "githubCopyFailed": "Échec de la copie. Veuillez copier manuellement.",
     "sponsor": "Sponsor",
     "sponsorDesc": "If this project helps you, consider sponsoring to support ongoing maintenance!",
     "alipay": "Alipay",
@@ -283,6 +385,7 @@
       "emptyProvider": "Aucun fournisseur configuré",
       "notConfigured": "Non configuré",
       "apiKey": "API Key",
+      "apiKeyHelper": "Assistant clé API",
       "baseUrl": "Base URL",
       "provider": "Fournisseur",
       "source": "Source",
@@ -322,6 +425,59 @@
       "localProviderName": "Local settings.json",
       "localProviderDescription": "Use configuration directly from ~/.claude/settings.json",
       "localProviderHelp": "When using local provider mode:\n• The plugin will not modify your ~/.claude/settings.json file\n• You need to manually manage your configurations\n• Make sure the file exists and contains valid JSON\n• Suitable for advanced users who prefer manual control",
+      "authorizeAndEnable": "Autoriser et activer",
+      "revokeAuthorization": "Révoquer l'autorisation",
+      "cliLoginProviderName": "État de connexion CLI",
+      "cliLoginProviderDescription": "Réutiliser l'état de connexion Claude CLI que vous avez déjà établi dans le terminal",
+      "cliLoginAuthorizeTitle": "Autoriser l'état de connexion CLI",
+      "cliLoginAuthorizeMessage": "Cela permettra au plugin d'utiliser votre session de connexion Claude CLI pour les requêtes API. Vous devez vous être connecté via Claude CLI dans votre terminal.",
+      "cliLoginAuthorizeDetail": "Le plugin délègue l'authentification au flux OAuth natif du SDK Claude. Vous pouvez révoquer cette autorisation à tout moment.",
+      "cliLoginDisableTitle": "Révoquer l'autorisation de connexion CLI",
+      "cliLoginDisableMessage": "Cela arrêtera l'utilisation de l'état de connexion CLI et laissera Claude sans fournisseur actif jusqu'à ce que vous en activiez explicitement un autre.",
+      "cliLoginAccountInfo": "Connecté en tant que : {{email}}",
+      "subscriptionTutorial": {
+        "entry": "Guide du compte d'abonnement",
+        "dialogTitle": "Comment utiliser un compte d'abonnement",
+        "tabAriaLabel": "Onglets du guide du compte d'abonnement",
+        "tabs": {
+          "claude": "Abonnement Claude",
+          "codex": "Abonnement Codex"
+        },
+        "code": {
+          "copy": "Copier le code",
+          "copied": "Copié"
+        },
+        "providers": {
+          "claude": {
+            "title": "Comment utiliser le compte d'abonnement Claude Code",
+            "item1": "Connectez-vous à votre compte d'abonnement Claude Code via le CLI dans le terminal, puis vous pouvez discuter normalement dans le terminal",
+            "item2": "Assurez-vous que le fichier ~/.claude/settings.json et le fichier .env sont vides",
+            "item3": "Redémarrez IDEA et vous pourrez discuter normalement",
+            "emptyConfigCodeLabel": "~/.claude/settings.json",
+            "emptyConfigCode": "{\n  \"env\": {\n  }\n}",
+            "noteTitle": "Remarques sur les cas spéciaux :",
+            "note1": "Si vous avez effectué les étapes ci-dessus mais que le plugin ne répond toujours pas, essayez de définir ~/.claude/settings.json .env sur :",
+            "proxyConfigCodeLabel": "~/.claude/settings.json",
+            "proxyConfigCode": "{\n  \"env\": {\n    \"HTTP_PROXY\": \"http://127.0.0.1:7897\",\n    \"HTTPS_PROXY\": \"http://127.0.0.1:7897\"\n  }\n}",
+            "issuePrefix": "Si cela ne fonctionne toujours pas, signalez un problème sur GitHub : ",
+            "issueUrl": "https://github.com/zhukunpenglinyutong/idea-claude-code-gui/issues"
+          },
+          "codex": {
+            "title": "Configuration du compte d'abonnement Codex",
+            "item1": "Exécutez codex login dans le CLI Codex du terminal et connectez-vous, puis vous pouvez discuter dans le terminal",
+            "item2": "Redémarrez IDEA",
+            "item3": "Vous pouvez maintenant discuter normalement",
+            "emptyConfigCodeLabel": "",
+            "emptyConfigCode": "",
+            "noteTitle": "",
+            "note1": "",
+            "proxyConfigCodeLabel": "",
+            "proxyConfigCode": "",
+            "issuePrefix": "Si cela ne fonctionne toujours pas, signalez un problème sur GitHub : ",
+            "issueUrl": "https://github.com/zhukunpenglinyutong/idea-claude-code-gui/issues"
+          }
+        }
+      },
       "importDialog": {
         "title": "Importer la configuration cc-switch",
         "summary": "{{total}} configurations trouvées, incluant",
@@ -340,6 +496,7 @@
         "addTitle": "Ajouter un fournisseur",
         "editTitle": "Modifier le fournisseur: {{name}}",
         "addDescription": "Configurer les informations du nouveau fournisseur",
+        "securityNotice": "Avis : Tous les paramètres sont stockés localement sur votre ordinateur. Ce projet est 100% open source. Utilisez-le en toute confiance.",
         "editDescription": "Les modifications seront appliquées immédiatement au fournisseur actuel.",
         "providerName": "Nom du fournisseur",
         "providerNamePlaceholder": "par ex., Claude Officiel",
@@ -383,7 +540,10 @@
         "kimi": "Kimi K2",
         "deepseek": "DeepSeek",
         "minimax": "MiniMax",
-        "xiaomi": "Xiaomi MiMo"
+        "xiaomi": "Xiaomi MiMo",
+        "xiaomiPlan": "Xiaomi MiMo Plan",
+        "qwen": "Alibaba Qwen",
+        "openrouter": "OpenRouter"
       }
     },
     "comingSoon": "Bientôt disponible...",
@@ -420,9 +580,28 @@
         "modelIdPlaceholder": "Model ID (required, e.g., gpt-4o)",
         "modelLabelPlaceholder": "Display name (optional)",
         "modelDescPlaceholder": "Model description (optional)",
+        "cliLoginProviderName": "Connexion Codex CLI",
+        "cliLoginProviderDescription": "Utiliser les identifiants d'abonnement ChatGPT de Codex CLI",
+        "cliLoginAuthorizeTitle": "Activer la connexion Codex CLI",
+        "cliLoginAuthorizeMessage": "Cela effacera votre config.toml et utilisera les identifiants d'abonnement ChatGPT de Codex CLI.",
+        "cliLoginAuthorizeDetail": "Assurez-vous d'etre connecte via 'codex login' dans votre terminal. Votre config.toml actuelle sera sauvegardee.",
+        "cliLoginDisableTitle": "Desactiver la connexion Codex CLI",
+        "cliLoginDisableMessage": "Cela restaurera votre config.toml precedent et basculera vers l'authentification par cle API.",
         "modelIdRequired": "Model ID is required",
         "modelIdInvalid": "Invalid model ID format (only letters, numbers, dots, hyphens, underscores, slashes and colons allowed)",
-        "modelIdDuplicate": "Model ID already exists"
+        "modelIdDuplicate": "Model ID already exists",
+        "envVarsTitle": "Environment Variables",
+        "messageEnvLabel": "Message Environment Variables",
+        "messageEnvHint": "Custom environment variables injected into the Codex message subprocess",
+        "mcpEnvLabel": "MCP Environment Variables",
+        "mcpEnvHint": "Custom environment variables injected into the MCP tool discovery subprocess",
+        "envKeyPlaceholder": "ENV_KEY",
+        "envValuePlaceholder": "value",
+        "addEnvVar": "Add Variable",
+        "envKeyInvalid": "Invalid key name (must start with letter/underscore, alphanumeric only)",
+        "envKeyProtected": "Cannot set built-in variable: {{key}}",
+        "envKeyDuplicate": "Duplicate key: {{key}}",
+        "envValueTooLong": "Valeur trop longue (max {{max}} caractères)"
       }
     },
     "agent": {
@@ -498,6 +677,16 @@
     "confirmDelete": "Confirmer la suppression",
     "deleteMessage": "Êtes-vous sûr de vouloir supprimer cette session ? Cette action ne peut pas être annulée.",
     "deleteSession": "Supprimer cette session",
+    "selectMode": "Select",
+    "exitSelectMode": "Exit selection",
+    "selectedSessions": "{{count}} selected",
+    "selectAll": "Select all",
+    "clearSelection": "Clear",
+    "deleteSelected": "Delete selected",
+    "confirmDeleteSelected": "Confirm Delete",
+    "deleteSelectedMessage": "Are you sure you want to delete {{count}} selected sessions? This action cannot be undone.",
+    "selectSession": "Select session",
+    "selectSessionWithTitle": "Select {{title}}",
     "exportSession": "Exporter la session",
     "exportSuccess": "Session exportée",
     "exportFailed": "Échec de l'exportation",
@@ -513,12 +702,16 @@
     "messageCount": "{{count}} messages",
     "searchPlaceholder": "Rechercher titre de session...",
     "noSearchResults": "Aucune session correspondante trouvée",
+    "tryOtherKeywords": "Essayez d'autres mots-clés de recherche",
     "deepSearchTooltip": "Deep Search (clear cache and reload)",
     "editTitle": "Modifier le titre",
     "saveTitleButton": "Enregistrer",
     "cancelEditButton": "Annuler",
     "titleTooLong": "Titre trop long (maximum 50 caractères)",
     "titleUpdated": "Titre mis à jour",
+    "copySessionId": "Copier l'ID de session pour CLI resume",
+    "sessionIdCopied": "ID de session copié",
+    "copyFailed": "Échec de la copie",
     "timeAgo": {
       "yearsAgo": "il y a des années",
       "monthsAgo": "il y a des mois",
@@ -546,7 +739,8 @@
       "WebSearch": "Recherche web",
       "WebFetch": "Récupérer web",
       "execute": "Exécuter {{toolName}}",
-      "readDirectory": "Lire le répertoire"
+      "readDirectory": "Lire le répertoire",
+      "timeoutWarning": "Veuillez répondre rapidement, la boîte de dialogue se fermera dans {{seconds}} secondes"
     }
   },
   "askUserQuestion": {
@@ -602,6 +796,12 @@
     "clickToCopy": "Cliquer pour copier",
     "switch": "Basculer",
     "switchProvider": "Changer de fournisseur",
+    "runtimeProvider": {
+      "title": "Changer le fournisseur actuel",
+      "loading": "Chargement des fournisseurs...",
+      "empty": "Aucun fournisseur disponible",
+      "switched": "Basculé vers {{provider}}"
+    },
     "link": "Lien"
   },
   "markdown": {
@@ -619,6 +819,7 @@
     "last30Days": "30 derniers jours",
     "allTime": "Tout le temps",
     "refreshData": "Actualiser les données",
+    "estimateNotice": "Les statistiques d'utilisation sont des estimations et peuvent être inexactes. Utilisez-les comme référence de tendance, pas comme facturation réelle.",
     "overview": "Vue d'ensemble",
     "models": "Modèles",
     "sessions": "Sessions",
@@ -808,6 +1009,7 @@
     "runCommand": "Exécuter commande",
     "contextEngine": "Moteur de contexte",
     "task": "Tâche",
+    "promptLabel": "Prompt",
     "readFile": "Lire fichier",
     "editFile": "Modifier fichier",
     "writeFile": "Écrire fichier",
@@ -835,6 +1037,7 @@
     "searchBatchTitle": "Recherche en lot",
     "editPrefix": "Modifier : {{fileName}}",
     "lineRange": "Lignes {{start}}-{{end}}",
+    "lineSingle": "Ligne {{line}}",
     "filePath": "Chemin du fichier :",
     "unknownTool": "Outil inconnu",
     "bashGroupBatchRun": "Batch Run Commands",
@@ -893,14 +1096,21 @@
     "importSkill": "Import Skill",
     "importGlobalSkill": "Import Global Skill",
     "importLocalSkill": "Import Local Skill",
+    "importUserSkill": "Importer un Skill utilisateur",
+    "importRepoSkill": "Importer un Skill de dépôt",
+    "user": "Utilisateur",
+    "repo": "Dépôt",
     "description": "Description",
     "noDescription": "No description",
     "noSkills": "No Skills",
+    "noMatchingSkills": "Aucun Skill correspondant trouvé",
     "importHint": "Click + button to import Skill file or folder",
     "deleteTitle": "Delete Skill",
     "deleteMessage": "Are you sure you want to delete {{scope}} Skill \"{{name}}\"?\n\nThis action cannot be undone.",
     "deleteMessageGlobal": "global",
     "deleteMessageLocal": "local",
+    "deleteMessageUser": "utilisateur",
+    "deleteMessageRepo": "de dépôt",
     "importSuccess": "Successfully imported {{count}} Skills",
     "importSuccessOne": "Successfully imported 1 Skill",
     "importPartialSuccess": "Successfully imported {{count}}/{{total}} Skills, some failed",
@@ -908,6 +1118,12 @@
     "deleteSuccess": "Successfully deleted Skill",
     "toggleSuccess": "Updated Skill status",
     "toggleFailed": "Failed to update Skill status",
+    "deleteFailed": "Échec de la suppression du Skill",
+    "enableSuccess": "Skill activé avec succès : {{name}}",
+    "disableSuccess": "Skill désactivé avec succès : {{name}}",
+    "operationFailed": "Échec de l'opération : {{error}}",
+    "operationError": "Échec de l'opération Skill",
+    "refreshed": "Liste des Skills actualisée",
     "help": {
       "title": "Que sont les Skills ?",
       "overview": {
@@ -955,52 +1171,118 @@
         "link1": "Que sont les Skills ?",
         "link2": "Création de Skills Personnalisées",
         "link3": "Dépôt d'Exemples de Skills d'Anthropic"
+      },
+      "codex": {
+        "title": "Qu'est-ce que les Skills Codex ?",
+        "overview": {
+          "title": "Aperçu",
+          "description": "Les Skills Codex sont des ensembles d'instructions stockés dans les répertoires .agents/skills/ qui améliorent les performances de Codex pour des tâches spécifiques. Invoquez-les dans le chat en utilisant le préfixe $."
+        },
+        "structure": {
+          "title": "Structure d'une Skill",
+          "description": "Une Skill Codex est un dossier contenant un fichier SKILL.md :",
+          "example": ".agents/skills/\n└── my-skill/\n    ├── SKILL.md          # Required: skill definition file\n    ├── templates/        # Optional: template files\n    └── references/       # Optional: reference materials"
+        },
+        "format": {
+          "title": "Format SKILL.md",
+          "description": "Les fichiers SKILL.md utilisent le format YAML frontmatter + Markdown :",
+          "example": "---\nname: my-skill-name\ndescription: Skill description and when to use\n---\n\n# Skill Instructions\n\nDetailed instruction content...",
+          "hint": "name et description sont des champs obligatoires"
+        },
+        "configuration": {
+          "title": "Configuration",
+          "description": "Où sont stockées les Skills Codex :",
+          "userPath": {
+            "label": "Répertoire utilisateur",
+            "description": "~/.agents/skills/, partagé entre tous les projets"
+          },
+          "repoPath": {
+            "label": "Répertoire du dépôt",
+            "description": "{project-root}/.agents/skills/, disponible uniquement dans le projet actuel"
+          },
+          "configToml": {
+            "label": "Activer/Désactiver",
+            "description": "Contrôlé via les entrées [[skills.config]] dans ~/.codex/config.toml"
+          }
+        },
+        "tips": {
+          "title": "Conseils d'utilisation",
+          "item1": "Assurez-vous que le répertoire de la Skill contient un fichier SKILL.md valide",
+          "item2": "Les noms des Skills doivent utiliser des lettres minuscules, des chiffres et des tirets",
+          "item3": "Tapez le préfixe $ dans le chat pour déclencher l'autocomplétion des Skills",
+          "item4": "Contrôlez le statut de chaque Skill avec les commutateurs activer/désactiver",
+          "item5": "Les Skills désactivées sont enregistrées dans ~/.codex/config.toml"
+        },
+        "learnMore": {
+          "title": "En savoir plus",
+          "description": "Plus d'informations sur les Skills Codex :",
+          "link1": "Documentation des Skills Codex"
+        }
       }
     }
   },
   "models": {
+    "addModel": "Ajouter un modèle",
     "claude": {
       "sonnet46": {
         "label": "Sonnet 4.6",
         "description": "Sonnet 4.6 · Modèle recommandé par défaut"
       },
       "opus46": {
-        "label": "Opus 4.6",
-        "description": "Opus 4.6 · Le plus récent et le plus performant"
+        "label": "Opus 4.7",
+        "description": "Opus 4.7 · Le plus récent et le plus performant"
       },
       "opus46_1m": {
-        "label": "Opus (1M contexte)",
-        "description": "Opus 4.6 pour les longues sessions"
+        "label": "Opus 4.6",
+        "description": "Opus 4.6 · Modèle de raisonnement haute performance"
       },
       "haiku45": {
         "label": "Haiku 4.5",
         "description": "Haiku 4.5 · Le plus rapide pour des réponses rapides"
       }
     },
+    "longContext": {
+      "label": "1M",
+      "shortLabel": "1M contexte",
+      "tooltipEnabled": "Activer/désactiver le contexte 1M",
+      "tooltipDisabled": "1M contexte non disponible pour Haiku"
+    },
     "codex": {
       "gpt53codex": {
-        "label": "gpt-5.3-codex",
+        "label": "GPT-5.3-Codex",
         "description": "Dernier modèle de codage agentique avec des capacités améliorées."
       },
-      "gpt53": {
-        "label": "gpt-5.3",
-        "description": "Dernier modèle de pointe avec des améliorations significatives."
+      "gpt55": {
+        "label": "GPT-5.5",
+        "description": "Modèle frontier le plus récent aux capacités renforcées."
+      },
+      "gpt54": {
+        "label": "GPT-5.4",
+        "description": "Dernier modèle de pointe avec des capacités améliorées."
       },
       "gpt52codex": {
-        "label": "gpt-5.2-codex",
-        "description": "Dernier modèle de codage agentique de pointe."
+        "label": "GPT-5.2-Codex",
+        "description": "Modèle de codage agentique de pointe."
       },
       "gpt51codexMax": {
-        "label": "gpt-5.1-codex-max",
+        "label": "GPT-5.1-Codex-Max",
         "description": "Modèle phare optimisé pour Codex avec raisonnement profond et rapide."
       },
-      "gpt51codexMini": {
-        "label": "gpt-5.1-codex-mini",
-        "description": "Optimisé pour Codex. Moins cher et plus rapide, mais moins performant."
+      "gpt54mini": {
+        "label": "GPT-5.4-Mini",
+        "description": "Modèle de codage agentique de pointe plus léger."
+      },
+      "gpt53codexSpark": {
+        "label": "GPT-5.3-Codex-Spark",
+        "description": "Modèle de codage ultra-rapide."
       },
       "gpt52": {
-        "label": "gpt-5.2",
-        "description": "Dernier modèle de pointe avec des améliorations en connaissances."
+        "label": "GPT-5.2",
+        "description": "Optimisé pour le travail professionnel et les agents longue durée."
+      },
+      "gpt51codexMini": {
+        "label": "GPT-5.1-Codex-Mini",
+        "description": "Optimisé pour Codex. Moins cher et plus rapide, mais moins performant."
       }
     }
   },
@@ -1039,8 +1321,8 @@
     },
     "acceptEdits": {
       "label": "Auto Edit",
-      "tooltip": "Codex approval_policy=auto-edit – automatically applies file patches, still asks before shell commands.",
-      "description": "Auto-create and edit files via apply_patch while keeping command approvals."
+      "tooltip": "Codex approval_policy=on-request – asks for approval when needed",
+      "description": "Balanced option. Allows normal editing flow while still requiring approvals when needed."
     },
     "bypassPermissions": {
       "label": "Full Auto",
@@ -1053,7 +1335,7 @@
       "label": "Claude Code"
     },
     "codex": {
-      "label": "Codex Cli"
+      "label": "Codex"
     },
     "gemini": {
       "label": "Gemini Cli"
@@ -1075,6 +1357,13 @@
     "enhanceFailed": "Failed to enhance prompt",
     "emptyPrompt": "Please enter a prompt first",
     "copyEnhanced": "Copy Enhanced"
+  },
+  "fileContext": {
+    "placeholder": "Contexte de fichier",
+    "enableTitle": "Activer le contexte de fichier ?",
+    "enableDescription": "Lorsque activé, le chemin du fichier ouvert dans l'éditeur sera envoyé à l'IA. Note : seul le chemin du fichier est transmis, pas son contenu.",
+    "enable": "Activer",
+    "cancel": "Annuler"
   },
   "rewind": {
     "title": "Restaurer les fichiers à l'état précédent",
@@ -1169,5 +1458,38 @@
     "title": "Nouveautés",
     "close": "Compris",
     "page": "{{current}} / {{total}}"
+  },
+  "error": {
+    "providerNotConfigured": "Fournisseur non configuré",
+    "providerNotConfiguredDesc": "Aucun fournisseur IA n'est encore configuré, ou l'utilisation de la configuration locale n'a pas été autorisée. Veuillez terminer la configuration dans les paramètres de gestion des fournisseurs avant de commencer une conversation.",
+    "goToProviderSettings": "Aller aux paramètres"
+  },
+  "errorDiagnostic": {
+    "copyCommand": "Copier",
+    "copied": "Copié",
+    "openDependencySettings": "Ouvrir la gestion des dépendances",
+    "recommended": "Recommandé",
+    "codexThreadResume": {
+      "title": "Le thread de session n'est plus valide",
+      "intro": "La création d'une nouvelle session résoudra ce problème. L'identifiant de thread de la session actuelle n'existe plus sur le serveur Codex.",
+      "reason": "Codex supprime les anciens threads après un certain temps, ce qui peut déclencher cette erreur lors de la reprise d'une session précédente."
+    },
+    "sdkNativeBinaryMissing": {
+      "title": "Installation du SDK incomplète — binaire natif manquant",
+      "intro": "Il s'agit d'un problème connu du miroir npm de Taobao (ce n'est pas un bug du plugin). Le miroir n'a pas entièrement synchronisé les fichiers spécifiques à la plateforme. Vous pouvez le résoudre manuellement avec l'une des options ci-dessous :",
+      "reason": "Ce problème disparaîtra automatiquement une fois la synchronisation du miroir Taobao terminée — aucune action supplémentaire n'est nécessaire.",
+      "solutions": {
+        "switchRegistry": {
+          "title": "Option 1 : Basculer temporairement vers le registre officiel et réinstaller",
+          "step0": "1. Exécutez dans votre terminal (passage au registre npm officiel) :",
+          "step1": "2. Ouvrez les paramètres de gestion des dépendances du plugin et cliquez sur Réinstaller :",
+          "step2": "3. Une fois la réinstallation terminée, revenez au miroir Taobao :"
+        },
+        "downgrade": {
+          "title": "Option 2 : Revenir à une version antérieure",
+          "step0": "Dans Gestion des dépendances, passez la version du SDK à v0.2.112 ou antérieure. Redémarrez IDEA après le changement."
+        }
+      }
+    }
   }
 }

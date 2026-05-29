@@ -13,7 +13,6 @@ describe('useNativeEventCapture', () => {
     renderHook(() =>
       useNativeEventCapture({
         editableRef: { current: el },
-        isComposing: false,
         isComposingRef: { current: false },
         lastCompositionEndTimeRef: { current: Date.now() - 1000 },
         sendShortcut: 'enter',
@@ -21,6 +20,7 @@ describe('useNativeEventCapture', () => {
         commandCompletion: { isOpen: false },
         agentCompletion: { isOpen: false },
         promptCompletion: { isOpen: false },
+        dollarCommandCompletion: { isOpen: false },
         completionSelectedRef,
         submittedOnEnterRef,
         handleSubmit,
@@ -41,7 +41,6 @@ describe('useNativeEventCapture', () => {
     renderHook(() =>
       useNativeEventCapture({
         editableRef: { current: el },
-        isComposing: false,
         isComposingRef: { current: false },
         lastCompositionEndTimeRef: { current: Date.now() - 1000 },
         sendShortcut: 'enter',
@@ -49,6 +48,7 @@ describe('useNativeEventCapture', () => {
         commandCompletion: { isOpen: false },
         agentCompletion: { isOpen: false },
         promptCompletion: { isOpen: false },
+        dollarCommandCompletion: { isOpen: false },
         completionSelectedRef: { current: false },
         submittedOnEnterRef: { current: false },
         handleSubmit,
@@ -68,7 +68,6 @@ describe('useNativeEventCapture', () => {
     renderHook(() =>
       useNativeEventCapture({
         editableRef: { current: el },
-        isComposing: false,
         isComposingRef: { current: false },
         lastCompositionEndTimeRef: { current: Date.now() - 1000 },
         sendShortcut: 'enter',
@@ -76,6 +75,7 @@ describe('useNativeEventCapture', () => {
         commandCompletion: { isOpen: false },
         agentCompletion: { isOpen: false },
         promptCompletion: { isOpen: false },
+        dollarCommandCompletion: { isOpen: false },
         completionSelectedRef: { current: false },
         submittedOnEnterRef: { current: false },
         handleSubmit: vi.fn(),
@@ -87,4 +87,3 @@ describe('useNativeEventCapture', () => {
     expect(handleEnhancePrompt).toHaveBeenCalledTimes(1);
   });
 });
-

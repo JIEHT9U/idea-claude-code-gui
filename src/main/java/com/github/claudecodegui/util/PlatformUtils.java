@@ -1,9 +1,10 @@
 package com.github.claudecodegui.util;
 
 import com.intellij.ide.plugins.IdeaPluginDescriptor;
-import com.intellij.ide.plugins.PluginManagerCore;
+import com.intellij.ide.plugins.PluginManager;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.extensions.PluginDescriptor;
 import com.intellij.openapi.extensions.PluginId;
 
 import java.io.File;
@@ -22,12 +23,22 @@ public class PlatformUtils {
 
     private static final Logger LOG = Logger.getInstance(PlatformUtils.class);
 
+    /**
+     * Fallback plugin ID used when descriptor lookup fails. Must stay in sync
+     * with the {@code <id>} declared in {@code plugin.xml}.
+     */
+    private static final String FALLBACK_PLUGIN_ID = "com.github.idea-claude-code-gui";
+
     // Platform type cache
     private static volatile PlatformType cachedPlatformType = null;
     // Plugin ID cache
     private static volatile String cachedPluginId = null;
     // Dev mode cache: null = not initialized, Boolean = cached result
     private static volatile Boolean cachedDevMode = null;
+    // Real OS home directory cache
+    private static volatile String cachedRealHomeDir = null;
+    // Temp directory cache
+    private static volatile String cachedTempDir = null;
 
     /**
      * Platform type enumeration.
@@ -43,6 +54,7 @@ public class PlatformUtils {
 
     /**
      * Get the current platform type.
+     *
      * @return the platform type enum value
      */
     public static PlatformType getPlatformType() {
@@ -63,6 +75,7 @@ public class PlatformUtils {
 
     /**
      * Check whether the current platform is Windows.
+     *
      * @return true if running on Windows
      */
     public static boolean isWindows() {
@@ -71,6 +84,7 @@ public class PlatformUtils {
 
     /**
      * Check whether the current platform is macOS.
+     *
      * @return true if running on macOS
      */
     public static boolean isMac() {
@@ -79,6 +93,7 @@ public class PlatformUtils {
 
     /**
      * Check whether the current platform is Linux.
+     *
      * @return true if running on Linux
      */
     public static boolean isLinux() {
@@ -97,24 +112,21 @@ public class PlatformUtils {
             synchronized (PlatformUtils.class) {
                 if (cachedPluginId == null) {
                     try {
-                        // Get the classloader for the current class
-                        ClassLoader classLoader = PlatformUtils.class.getClassLoader();
-
-                        // Iterate over all plugins to find the one containing the current class
-                        for (IdeaPluginDescriptor plugin : PluginManagerCore.getPlugins()) {
-                            if (plugin.getPluginClassLoader() == classLoader) {
-                                cachedPluginId = plugin.getPluginId().getIdString();
-                                LOG.info("Plugin ID detected: " + cachedPluginId);
-                                return cachedPluginId;
-                            }
+                        // Resolve the owning plugin via public API rather than
+                        // iterating all plugins through PluginManagerCore (internal API).
+                        PluginDescriptor descriptor = PluginManager.getPluginByClass(PlatformUtils.class);
+                        if (descriptor != null && descriptor.getPluginId() != null) {
+                            cachedPluginId = descriptor.getPluginId().getIdString();
+                            LOG.info("Plugin ID detected: " + cachedPluginId);
+                            return cachedPluginId;
                         }
 
                         // If no matching plugin found, use fallback value
                         LOG.warn("Failed to detect plugin ID: no matching plugin found");
-                        cachedPluginId = "com.github.idea-claude-code-gui"; // fallback value
+                        cachedPluginId = FALLBACK_PLUGIN_ID;
                     } catch (Exception e) {
                         LOG.warn("Failed to detect plugin ID: " + e.getMessage());
-                        cachedPluginId = "com.github.idea-claude-code-gui"; // fallback value
+                        cachedPluginId = FALLBACK_PLUGIN_ID;
                     }
                 }
             }
@@ -182,8 +194,10 @@ public class PlatformUtils {
                 return true;
             }
 
-            // Check plugin actual path
-            IdeaPluginDescriptor plugin = PluginManagerCore.getPlugin(
+            // Check plugin actual path.
+            // findEnabledPlugin only returns enabled plugins, which is fine here:
+            // this code is executing inside the plugin, so the plugin must be enabled.
+            IdeaPluginDescriptor plugin = PluginManager.getInstance().findEnabledPlugin(
                     PluginId.getId(getPluginId())
             );
             if (plugin != null) {
@@ -210,9 +224,9 @@ public class PlatformUtils {
     private static boolean isDebuggerAttached() {
         try {
             return ManagementFactory.getRuntimeMXBean().getInputArguments().stream()
-                    .anyMatch(arg -> arg.contains("-agentlib:jdwp") ||
-                            arg.contains("-Xdebug") ||
-                            arg.contains("-Xrunjdwp"));
+                           .anyMatch(arg -> arg.contains("-agentlib:jdwp") ||
+                                                    arg.contains("-Xdebug") ||
+                                                    arg.contains("-Xrunjdwp"));
         } catch (Exception e) {
             LOG.warn("Failed to check debugger attachment: " + e.getMessage());
         }
@@ -254,6 +268,7 @@ public class PlatformUtils {
 
     /**
      * Get the PATH environment variable (handles both "Path" and "PATH" on Windows).
+     *
      * @return the PATH environment variable value
      */
     public static String getPathEnv() {
@@ -265,7 +280,7 @@ public class PlatformUtils {
     /**
      * Delete a file with retry logic (handles Windows file locking issues).
      *
-     * @param file the file to delete
+     * @param file       the file to delete
      * @param maxRetries maximum number of retry attempts
      * @return true if deletion succeeded
      */
@@ -300,7 +315,7 @@ public class PlatformUtils {
     /**
      * Recursively delete a directory with retry logic.
      *
-     * @param directory the directory to delete
+     * @param directory  the directory to delete
      * @param maxRetries maximum number of retry attempts
      * @return true if deletion succeeded
      */
@@ -348,9 +363,10 @@ public class PlatformUtils {
                 // /F = force termination
                 // /T = terminate the entire process tree (including children)
                 ProcessBuilder pb = new ProcessBuilder(
-                    "taskkill", "/F", "/T", "/PID", String.valueOf(pid)
+                        "taskkill", "/F", "/T", "/PID", String.valueOf(pid)
                 );
-                pb.redirectErrorStream(true);
+                pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+                pb.redirectError(ProcessBuilder.Redirect.DISCARD);
                 Process killer = pb.start();
                 boolean finished = killer.waitFor(5, TimeUnit.SECONDS);
                 if (!finished) {
@@ -417,15 +433,16 @@ public class PlatformUtils {
         try {
             if (isWindows()) {
                 ProcessBuilder pb = new ProcessBuilder(
-                    "taskkill", "/F", "/T", "/PID", String.valueOf(pid)
+                        "taskkill", "/F", "/T", "/PID", String.valueOf(pid)
                 );
-                pb.redirectErrorStream(true);
+                pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+                pb.redirectError(ProcessBuilder.Redirect.DISCARD);
                 Process killer = pb.start();
                 return killer.waitFor(5, TimeUnit.SECONDS);
             } else {
                 // Unix: try using the kill command
                 ProcessBuilder pb = new ProcessBuilder(
-                    "kill", "-9", String.valueOf(pid)
+                        "kill", "-9", String.valueOf(pid)
                 );
                 pb.redirectErrorStream(true);
                 Process killer = pb.start();
@@ -441,6 +458,7 @@ public class PlatformUtils {
 
     /**
      * Get the operating system name.
+     *
      * @return the OS name
      */
     public static String getOsName() {
@@ -449,6 +467,7 @@ public class PlatformUtils {
 
     /**
      * Get the operating system version.
+     *
      * @return the OS version
      */
     public static String getOsVersion() {
@@ -456,23 +475,68 @@ public class PlatformUtils {
     }
 
     /**
-     * Get the user's home directory.
+     * Get the user's home directory, bypassing any JVM-level user.home overrides.
+     * IDEA may override user.home to a custom directory (e.g. E:/Untitled/IDEA-Jconfig),
+     * so this method resolves the real OS home via USERPROFILE (Windows) / HOME (Unix).
+     * Falls back to System.getProperty("user.home") if env var is unavailable.
+     * Result is cached after first invocation.
+     *
      * @return the home directory path
      */
     public static String getHomeDirectory() {
-        return System.getProperty("user.home", "");
+        if (cachedRealHomeDir == null) {
+            synchronized (PlatformUtils.class) {
+                if (cachedRealHomeDir == null) {
+                    String home = null;
+                    if (isWindows()) {
+                        home = System.getenv("USERPROFILE");
+                    } else {
+                        home = System.getenv("HOME");
+                    }
+                    if (home == null || home.isEmpty()) {
+                        home = System.getProperty("user.home", "");
+                    }
+                    cachedRealHomeDir = home;
+                }
+            }
+        }
+        return cachedRealHomeDir;
     }
 
     /**
      * Get the system temporary directory.
-     * @return the temporary directory path
+     * On Windows, checks TEMP → TMP → java.io.tmpdir in order.
+     * On Unix, checks TMPDIR → java.io.tmpdir.
+     * Result is cached after first invocation.
+     *
+     * @return the temporary directory path, or empty string if unavailable
      */
     public static String getTempDirectory() {
-        return System.getProperty("java.io.tmpdir", "");
+        if (cachedTempDir == null) {
+            synchronized (PlatformUtils.class) {
+                if (cachedTempDir == null) {
+                    String tempDir = null;
+                    if (isWindows()) {
+                        tempDir = getEnvIgnoreCase("TEMP");
+                        if (tempDir == null || tempDir.isEmpty()) {
+                            tempDir = getEnvIgnoreCase("TMP");
+                        }
+                    } else {
+                        tempDir = System.getenv("TMPDIR");
+                    }
+                    if (tempDir == null || tempDir.isEmpty()) {
+                        tempDir = System.getProperty("java.io.tmpdir", "");
+                    }
+                    cachedTempDir = tempDir;
+                }
+            }
+        }
+        return cachedTempDir;
     }
 
     /**
      * Get the maximum path length for the current platform.
+     *
      * @return the maximum path length (260 for Windows, 4096 for other platforms)
      */
     public static int getMaxPathLength() {

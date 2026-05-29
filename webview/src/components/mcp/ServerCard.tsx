@@ -48,8 +48,15 @@ export function ServerCard({
 }: ServerCardProps) {
   const statusInfo = getServerStatusInfo(server, serverStatus);
   const status = statusInfo?.status;
+  const effectiveStatus: McpServerStatusInfo['status'] | undefined =
+    status === 'pending' && (toolsInfo?.tools?.length ?? 0) > 0
+      ? 'connected'
+      : status;
   const enabled = isServerEnabled(server, isCodexMode);
-  const isConnected = statusInfo?.status === 'connected';
+  const isConnected = effectiveStatus === 'connected';
+
+  const iconStyle: React.CSSProperties = { background: getIconColor(server.id) };
+  const statusColorStyle: React.CSSProperties = { color: getStatusColor(server, effectiveStatus, isCodexMode) };
 
   return (
     <div
@@ -59,17 +66,17 @@ export function ServerCard({
       <div className="card-header" onClick={onToggleExpand}>
         <div className="header-left-section">
           <span className={`expand-icon codicon ${isExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right'}`}></span>
-          <div className="server-icon" style={{ background: getIconColor(server.id) }}>
+          <div className="server-icon" style={iconStyle}>
             {getServerInitial(server)}
           </div>
           <span className="server-name">{server.name || server.id}</span>
           {/* Connection status indicator */}
           <span
             className="status-indicator"
-            style={{ color: getStatusColor(server, status, isCodexMode) }}
-            title={getStatusText(server, status, isCodexMode, t)}
+            style={statusColorStyle}
+            title={getStatusText(server, effectiveStatus, isCodexMode, t)}
           >
-            <span className={`codicon ${getStatusIcon(server, status, isCodexMode)}`}></span>
+            <span className={`codicon ${getStatusIcon(server, effectiveStatus, isCodexMode)}`}></span>
           </span>
         </div>
         <div className="header-right-section" onClick={(e) => e.stopPropagation()}>
@@ -126,10 +133,10 @@ export function ServerCard({
               <span className="info-label">{t('mcp.connectionStatus')}:</span>
               <span
                 className="info-value status-value"
-                style={{ color: getStatusColor(server, statusInfo?.status, isCodexMode) }}
+                style={statusColorStyle}
               >
-                <span className={`codicon ${getStatusIcon(server, statusInfo?.status, isCodexMode)}`}></span>
-                {' '}{getStatusText(server, statusInfo?.status, isCodexMode, t)}
+                <span className={`codicon ${getStatusIcon(server, effectiveStatus, isCodexMode)}`}></span>
+                {' '}{getStatusText(server, effectiveStatus, isCodexMode, t)}
               </span>
             </div>
             {statusInfo?.serverInfo && (
