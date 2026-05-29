@@ -1,0 +1,28 @@
+name: Sync fork with upstream
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fast-forward main from upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh api -X POST repos/${{ github.repository }}/merge-upstream -f branch=main
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync tags from upstream
+        run: |
+          git remote add upstream https://github.com/zhukunpenglinyutong/jetbrains-cc-gui.git
+          git fetch upstream --tags
+          git push origin --tags
