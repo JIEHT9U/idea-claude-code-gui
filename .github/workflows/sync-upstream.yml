@@ -1,5 +1,9 @@
 name: Sync fork with upstream
 
+# Requires repository secret UPSTREAM_SYNC_TOKEN: a PAT with `repo` + `workflow`
+# scopes. The built-in GITHUB_TOKEN cannot modify files under .github/workflows/,
+# so syncing fails whenever upstream changes a workflow file.
+
 on:
   schedule:
     - cron: '0 */6 * * *'
@@ -14,11 +18,12 @@ jobs:
     steps:
       - name: Fast-forward main from upstream
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
         run: gh api -X POST repos/${{ github.repository }}/merge-upstream -f branch=main
 
       - uses: actions/checkout@v4
         with:
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
           fetch-depth: 0
 
       - name: Sync tags from upstream
