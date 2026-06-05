@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AVAILABLE_MODELS, normalizeClaudeModelId, modelSupports1MContext, strip1MContextSuffix } from '../types';
 import type { ModelInfo } from '../types';
 import { readClaudeModelMapping } from '../../../utils/claudeModelMapping';
 import { ProviderModelIcon } from '../../shared/ProviderModelIcon';
+import { useDropdownPosition } from '../../../hooks/useDropdownPosition';
 import Switch from 'antd/es/switch';
 
 const RELATIVE_INLINE_BLOCK_STYLE: React.CSSProperties = { position: 'relative', display: 'inline-block' };
@@ -11,11 +12,13 @@ const CHEVRON_ICON_STYLE: React.CSSProperties = { fontSize: '10px', marginLeft: 
 const DROPDOWN_STYLE: React.CSSProperties = {
   position: 'absolute',
   bottom: '100%',
-  left: 0,
   marginBottom: '4px',
   zIndex: 10000,
+  maxWidth: 'calc(100vw - 16px)',
+  overflowX: 'hidden',
 };
-const MODEL_OPTION_INFO_STYLE: React.CSSProperties = { display: 'flex', flexDirection: 'column', flex: 1 };
+const MODEL_OPTION_INFO_STYLE: React.CSSProperties = { display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, overflow: 'hidden' };
+const MODEL_TEXT_STYLE: React.CSSProperties = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
 const LONG_CONTEXT_OPTION_STYLE: React.CSSProperties = { justifyContent: 'space-between', cursor: 'default' };
 const LONG_CONTEXT_LABEL_STYLE: React.CSSProperties = { fontSize: '12px' };
 
@@ -131,6 +134,11 @@ export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, curren
   const [isOpen, setIsOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const { positionedStyle, recalculate } = useDropdownPosition({
+    buttonRef,
+    dropdownRef,
+    preferredAlignment: 'right',
+  });
 
   // Strip [1m] suffix for finding the model in the list
   const strippedValue = strip1MContextSuffix(value);
@@ -190,8 +198,12 @@ export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, curren
    */
   const handleToggle = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    setIsOpen(!isOpen);
-  }, [isOpen]);
+    const nextOpen = !isOpen;
+    setIsOpen(nextOpen);
+    if (nextOpen) {
+      recalculate();
+    }
+  }, [isOpen, recalculate]);
 
   /**
    * Select model
@@ -229,6 +241,12 @@ export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, curren
     };
   }, [isOpen]);
 
+  useLayoutEffect(() => {
+    if (isOpen) {
+      recalculate();
+    }
+  }, [isOpen, recalculate]);
+
   return (
     <div style={RELATIVE_INLINE_BLOCK_STYLE}>
       <button
@@ -251,7 +269,7 @@ export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, curren
         <div
           ref={dropdownRef}
           className="selector-dropdown"
-          style={DROPDOWN_STYLE}
+          style={{ ...DROPDOWN_STYLE, ...positionedStyle }}
         >
           {models.map((model) => (
             <div
@@ -266,9 +284,9 @@ export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, curren
                 colored
               />
               <div style={MODEL_OPTION_INFO_STYLE}>
-                <span>{getModelLabel(model, false)}</span>
+                <span style={MODEL_TEXT_STYLE}>{getModelLabel(model, false)}</span>
                 {getModelDescription(model) && (
-                  <span className="model-description">{getModelDescription(model)}</span>
+                  <span className="model-description" style={MODEL_TEXT_STYLE}>{getModelDescription(model)}</span>
                 )}
               </div>
               {isSelectedModel(model.id) && (
