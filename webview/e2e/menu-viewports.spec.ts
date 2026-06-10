@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { APP_VERSION } from '../src/version/version';
 
 type BridgeWindow = Window & typeof globalThis & {
   sendToJava?: (message: string) => void;
@@ -83,7 +84,7 @@ const LARGE_MODEL_LIST = Array.from({ length: 240 }, (_, index) => {
 });
 
 async function installBridgeMocks(page: Page, customModels = [LONG_MODEL]) {
-  await page.addInitScript(({ processSnapshot, claudeProviders, codexProviders, models }) => {
+  await page.addInitScript(({ processSnapshot, claudeProviders, codexProviders, models, appVersion }) => {
     localStorage.setItem('model-selection-state', JSON.stringify({
       provider: 'claude',
       claudeModel: 'claude-sonnet-4-6',
@@ -94,7 +95,7 @@ async function installBridgeMocks(page: Page, customModels = [LONG_MODEL]) {
       reasoningEffort: 'high',
     }));
     localStorage.setItem('claude-custom-models', JSON.stringify(models));
-    localStorage.setItem('lastSeenChangelogVersion', '0.4.4');
+    localStorage.setItem('lastSeenChangelogVersion', appVersion);
 
     const hideVConsole = () => {
       const style = document.createElement('style');
@@ -126,6 +127,7 @@ async function installBridgeMocks(page: Page, customModels = [LONG_MODEL]) {
     claudeProviders: CLAUDE_PROVIDERS_PAYLOAD,
     codexProviders: CODEX_PROVIDERS_PAYLOAD,
     models: customModels,
+    appVersion: APP_VERSION,
   });
 }
 
@@ -246,8 +248,7 @@ test('config submenus stay visible across constrained viewports', async ({ page 
   await expect(mainDropdown).toBeVisible();
   await expectInsideViewport(page, mainDropdown, 'config dropdown');
 
-  const topLevelRows = mainDropdown.locator(':scope > .selector-option');
-  const nodeProcessRow = topLevelRows.filter({ hasText: /Node|进程|process/i }).first();
+  const nodeProcessRow = mainDropdown.getByTestId('config-option-node-processes');
   await nodeProcessRow.hover();
   const nodeDropdown = page.locator('.node-process-dropdown');
   await expect(nodeDropdown).toBeVisible();
@@ -255,14 +256,14 @@ test('config submenus stay visible across constrained viewports', async ({ page 
   await expectInsideViewport(page, nodeDropdown, 'node process submenu');
   await expectSubmenuAnchoredToRow(page, nodeProcessRow, nodeDropdown, 'node process submenu');
 
-  const runtimeProviderRow = topLevelRows.filter({ hasText: /provider|切换|提供/i }).first();
+  const runtimeProviderRow = mainDropdown.getByTestId('config-option-runtime-provider');
   await runtimeProviderRow.hover();
   const runtimeDropdown = page.locator('.runtime-provider-dropdown');
   await expect(runtimeDropdown).toBeVisible();
   await expectInsideViewport(page, runtimeDropdown, 'runtime provider submenu');
   await expectSubmenuAnchoredToRow(page, runtimeProviderRow, runtimeDropdown, 'runtime provider submenu');
 
-  const agentRow = topLevelRows.first();
+  const agentRow = mainDropdown.getByTestId('config-option-agent');
   await agentRow.hover();
   const agentDropdown = agentRow.locator('.selector-dropdown').first();
   await expect(agentDropdown).toBeVisible();
@@ -284,8 +285,8 @@ test('long model and mode text stays contained in selector menus', async ({ page
   const modeDropdown = page.locator('.selector-dropdown').first();
   await expect(modeDropdown).toBeVisible();
   await expectInsideViewport(page, modeDropdown, 'mode dropdown with long descriptions');
-  const longModeOption = modeDropdown.locator('.selector-option').filter({ hasText: 'Fully automated' }).first();
-  const longModeDescription = longModeOption.locator('span').filter({ hasText: 'Fully automated' }).first();
+  const longModeOption = modeDropdown.getByTestId('mode-option-bypassPermissions');
+  const longModeDescription = longModeOption.locator('.mode-description');
   await expect(longModeDescription).toBeVisible();
   await expectContainedWithin(longModeOption, longModeDescription, 'long mode description');
   await closeOpenMenus(page);
@@ -318,10 +319,10 @@ test('large model selector remains searchable and capped', async ({ page }) => {
 
   const renderedLargeModels = modelDropdown.getByText(/^Large Model \d{3}$/);
   await expect(renderedLargeModels).toHaveCount(100);
-  await expect(modelDropdown.getByText(/^\+ \d+ more models\. Type to search\.$/)).toBeVisible();
+  await expect(modelDropdown.getByTestId('model-hidden-count')).toBeVisible();
   await expect(modelDropdown.getByText(SEARCH_TARGET_MODEL.label)).toHaveCount(0);
 
-  const searchInput = modelDropdown.getByPlaceholder('Search models');
+  const searchInput = modelDropdown.getByTestId('model-search-input');
   await expect(searchInput).toBeVisible();
   await searchInput.fill('Search Target 220');
 

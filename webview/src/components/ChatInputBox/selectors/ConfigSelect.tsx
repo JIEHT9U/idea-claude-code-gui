@@ -395,6 +395,7 @@ export const ConfigSelect = ({
           <div
             ref={agentTriggerRef}
             className="selector-option"
+            data-testid="config-option-agent"
             onMouseEnter={() => {
               setActiveSubmenu('agent');
               agentSubmenuRecalculate();
@@ -424,6 +425,7 @@ export const ConfigSelect = ({
           <div
             ref={runtimeProviderTriggerRef}
             className="selector-option"
+            data-testid="config-option-runtime-provider"
             onMouseEnter={() => setActiveSubmenu('runtimeProvider')}
             onMouseLeave={() => setActiveSubmenu('none')}
             style={SELECTOR_OPTION_RELATIVE_STYLE}
@@ -455,6 +457,7 @@ export const ConfigSelect = ({
           {/* Node Process Management Item */}
           <div
             className="selector-option"
+            data-testid="config-option-node-processes"
             onMouseEnter={() => setActiveSubmenu('nodeProcesses')}
             onMouseLeave={() => setActiveSubmenu('none')}
             style={SELECTOR_OPTION_RELATIVE_STYLE}

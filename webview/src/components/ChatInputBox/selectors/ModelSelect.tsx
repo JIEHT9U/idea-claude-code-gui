@@ -295,6 +295,7 @@ export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, curren
             <div className="selector-search-row">
               <input
                 className="selector-search-input"
+                data-testid="model-search-input"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder={t('models.searchPlaceholder', { defaultValue: 'Search models' })}
@@ -331,7 +332,7 @@ export const ModelSelect = ({ value, onChange, models = AVAILABLE_MODELS, curren
             </div>
           )}
           {hiddenModelCount > 0 && (
-            <div className="selector-option selector-option-status">
+            <div className="selector-option selector-option-status" data-testid="model-hidden-count">
               {t('models.hiddenModelCount', {
                 count: hiddenModelCount,
                 defaultValue: `+ ${hiddenModelCount} more models. Type to search.`,

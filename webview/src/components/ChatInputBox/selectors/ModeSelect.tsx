@@ -142,6 +142,7 @@ export const ModeSelect = ({ value, onChange, provider }: ModeSelectProps) => {
           {modeOptions.map((mode) => (
             <div
               key={mode.id}
+              data-testid={`mode-option-${mode.id}`}
               className={`selector-option ${mode.id === value ? 'selected' : ''} ${mode.disabled ? 'disabled' : ''}`}
               onClick={() => handleSelect(mode.id, mode.disabled)}
               title={getModeText(mode.id, 'tooltip')}
