@@ -1049,6 +1049,19 @@
       "empty": "No providers available",
       "switched": "Switched to {{provider}}"
     },
+    "codexQuota": {
+      "title": "Codex quota",
+      "loading": "Loading quota...",
+      "unavailable": "Quota unavailable",
+      "lastUpdated": "Updated {{value}}",
+      "fiveHour": "5h usage",
+      "weekly": "Weekly usage",
+      "windowRemainingPercent": "{{percent}}% remaining",
+      "windowRemainingPercentWithReset": "{{percent}}% remaining · Resets {{value}}",
+      "windowUsedOnly": "{{used}} used",
+      "windowUnavailable": "Unavailable",
+      "apiKeyMode": "API key mode has no subscription quota"
+    },
     "nodeProcesses": {
       "title": "Node Process Manager",
       "badge": "{{total}} processes",
