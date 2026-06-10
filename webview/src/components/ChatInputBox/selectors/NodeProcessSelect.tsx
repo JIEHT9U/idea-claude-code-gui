@@ -179,7 +179,7 @@ type PendingConfirm =
   | { kind: 'restart'; proc: NodeProcessInfo }
   | { kind: 'killAll'; orphans: NodeProcessInfo[] };
 
-interface EmbeddedDropdownLayout {
+export interface EmbeddedNodeProcessDropdownLayout {
   flipToLeft: boolean;
   maxWidth: number;
   maxHeight: number;
@@ -187,12 +187,19 @@ interface EmbeddedDropdownLayout {
   horizontalOverlap: number;
 }
 
-function getEmbeddedNodeProcessDropdownLayout(
-  parentRect: { left: number; right: number; top: number },
-  viewportWidth: number,
-  viewportHeight: number,
-  dropdownHeight: number,
-): EmbeddedDropdownLayout {
+export interface EmbeddedNodeProcessDropdownLayoutInput {
+  parentRect: { left: number; right: number; top: number };
+  viewportWidth: number;
+  viewportHeight: number;
+  dropdownHeight: number;
+}
+
+export function getEmbeddedNodeProcessDropdownLayout({
+  parentRect,
+  viewportWidth,
+  viewportHeight,
+  dropdownHeight,
+}: EmbeddedNodeProcessDropdownLayoutInput): EmbeddedNodeProcessDropdownLayout {
   const normalAvailableWidth = Math.max(
     0,
     viewportWidth - DROPDOWN_VIEWPORT_PADDING_PX - parentRect.right,
@@ -273,7 +280,7 @@ export const NodeProcessSelect = ({ embedded = false, onClose, onToast }: NodePr
   const [snapshot, setSnapshot] = useState<NodeProcessSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [pendingPids, setPendingPids] = useState<Set<number>>(() => new Set());
-  const [embeddedLayout, setEmbeddedLayout] = useState<EmbeddedDropdownLayout>(() => ({
+  const [embeddedLayout, setEmbeddedLayout] = useState<EmbeddedNodeProcessDropdownLayout>(() => ({
     flipToLeft: false,
     maxWidth: DROPDOWN_MAX_WIDTH_PX,
     maxHeight: DROPDOWN_MAX_HEIGHT_PX,
@@ -297,16 +304,16 @@ export const NodeProcessSelect = ({ embedded = false, onClose, onToast }: NodePr
     const viewport = getAppViewport();
     const parentRect = parent.getBoundingClientRect();
     const nodeRect = node.getBoundingClientRect();
-    const nextLayout = getEmbeddedNodeProcessDropdownLayout(
-      {
+    const nextLayout = getEmbeddedNodeProcessDropdownLayout({
+      parentRect: {
         left: parentRect.left - viewport.left,
         right: parentRect.right - viewport.left,
         top: parentRect.top - viewport.top,
       },
-      viewport.width,
-      viewport.height,
-      Math.max(nodeRect.height, node.scrollHeight),
-    );
+      viewportWidth: viewport.width,
+      viewportHeight: viewport.height,
+      dropdownHeight: Math.max(nodeRect.height, node.scrollHeight),
+    });
 
     setEmbeddedLayout((current) => (
       current.flipToLeft === nextLayout.flipToLeft
