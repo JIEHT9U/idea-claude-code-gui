@@ -1,7 +1,7 @@
 package com.github.claudecodegui.handler.history;
 
+import com.github.claudecodegui.bridge.NodeDetector;
 import com.github.claudecodegui.handler.core.HandlerContext;
-import com.github.claudecodegui.util.PlatformUtils;
 import com.github.claudecodegui.util.PathUtils;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -38,14 +38,34 @@ class SessionConversionService {
 
     private final HandlerContext context;
     private final Gson gson = new Gson();
-    private static final String HOME_DIR = PlatformUtils.getHomeDirectory();
-    private static final Path CLAUDE_DIR = Paths.get(HOME_DIR, ".claude");
-    private static final Path PROJECTS_DIR = CLAUDE_DIR.resolve("projects");
 
     private static final String ENTRYPOINT_CLI = SessionEntrypoint.CLI.getValue();
 
     SessionConversionService(HandlerContext context) {
         this.context = context;
+    }
+
+    /**
+     * Resolve {@code ~/.claude/projects} at call time. A static field would snapshot the
+     * Windows home at class-load, but a WSL node stores sessions under the WSL filesystem;
+     * {@link NodeDetector#resolveHomeForFileOps()} returns the correct home for the active
+     * node. Every other history service in this package was migrated the same way.
+     */
+    private static Path projectsDir() {
+        return Paths.get(NodeDetector.resolveHomeForFileOps(), ".claude", "projects");
+    }
+
+    /**
+     * Convert the IDE project base path to the form Claude CLI used when it created the
+     * session directory. A WSL node keys projects by their Linux path, so the host
+     * {@code D:\proj} must become {@code /mnt/d/proj} before sanitizing; a native node
+     * keeps the path as-is. Mirrors {@code HistoryDeleteService}.
+     */
+    private static String resolveProjectPathForFileOps(String rawProjectPath) {
+        String nodePath = NodeDetector.getInstance().getCachedNodePath();
+        return NodeDetector.isWslPath(nodePath)
+                ? NodeDetector.convertToWslPath(rawProjectPath)
+                : rawProjectPath;
     }
 
     /**
@@ -224,7 +244,8 @@ class SessionConversionService {
      * @param modifiedCount number of rows modified so far.
      * @return original or converted JSON row.
      */
-    private String convertEntrypointInLine(
+    // Package-private so SessionConversionServiceTest can exercise the per-row rewrite directly.
+    String convertEntrypointInLine(
             String line,
             AtomicBoolean hasCliEntrypoint,
             AtomicInteger modifiedCount
@@ -302,8 +323,9 @@ class SessionConversionService {
      */
     private Path findSessionFile(String sessionId, String projectPath) {
         try {
+            Path projectsDir = projectsDir();
             if (projectPath != null && !projectPath.isEmpty()) {
-                Path projectDir = this.getProjectDir(projectPath);
+                Path projectDir = this.getProjectDir(projectsDir, resolveProjectPathForFileOps(projectPath));
                 Path sessionFile = projectDir.resolve(sessionId + ".jsonl");
                 if (Files.exists(sessionFile)) {
                     return sessionFile;
@@ -311,12 +333,12 @@ class SessionConversionService {
             }
 
             // Scan all project directories
-            if (!Files.exists(PROJECTS_DIR)) {
+            if (!Files.exists(projectsDir)) {
                 return null;
             }
 
             LOG.debug("[SessionConversionService] Scanning project directories for session: " + sessionId);
-            try (var stream = Files.newDirectoryStream(PROJECTS_DIR)) {
+            try (var stream = Files.newDirectoryStream(projectsDir)) {
                 for (Path projectDir : stream) {
                     if (!Files.isDirectory(projectDir)) {
                         continue;
@@ -337,12 +359,13 @@ class SessionConversionService {
     /**
      * Get project directory path.
      *
+     * @param projectsDir Resolved {@code ~/.claude/projects} base.
      * @param projectPath Project path.
      * @return Project directory path.
      */
-    private Path getProjectDir(String projectPath) {
+    private Path getProjectDir(Path projectsDir, String projectPath) {
         String sanitized = PathUtils.sanitizePath(projectPath);
-        return PROJECTS_DIR.resolve(sanitized);
+        return projectsDir.resolve(sanitized);
     }
 
     /**
