@@ -6,7 +6,7 @@ import {
   EFFORT_SUPPORTED_CLAUDE_MODELS,
   apply1MContextSuffix,
 } from '../components/ChatInputBox/types';
-import type { Attachment, ChatInputBoxHandle, PermissionMode, ReasoningEffort, SelectedAgent } from '../components/ChatInputBox/types';
+import type { Attachment, ChatInputBoxHandle, PermissionMode, ReasoningEffort, SelectedAgent, CodexFastMode } from '../components/ChatInputBox/types';
 import type { ViewMode } from './useModelProviderState';
 
 /**
@@ -41,6 +41,7 @@ export interface UseMessageSenderOptions {
   selectedModel: string;
   permissionMode: PermissionMode;
   reasoningEffort: ReasoningEffort;
+  codexFastMode: CodexFastMode;
   selectedAgent: SelectedAgent | null;
   sdkStatusLoaded: boolean;
   currentSdkInstalled: boolean;
@@ -73,6 +74,7 @@ export function useMessageSender({
   selectedModel,
   permissionMode,
   reasoningEffort,
+  codexFastMode,
   selectedAgent,
   sdkStatusLoaded,
   currentSdkInstalled,
@@ -278,6 +280,7 @@ export function useMessageSender({
           fileTags: fileTagsInfo,
           permissionMode: effectivePermissionMode,
           ...reasoningEffortPayload,
+          codexFastMode,
         });
         sendBridgeEvent('send_message_with_attachments', payload);
       } catch (error) {
@@ -288,6 +291,7 @@ export function useMessageSender({
           fileTags: fileTagsInfo,
           permissionMode: effectivePermissionMode,
           ...reasoningEffortPayload,
+          codexFastMode,
         });
         sendBridgeEvent('send_message', fallbackPayload);
       }
@@ -298,10 +302,11 @@ export function useMessageSender({
         fileTags: fileTagsInfo,
         permissionMode: effectivePermissionMode,
         ...reasoningEffortPayload,
+        codexFastMode,
       });
       sendBridgeEvent('send_message', payload);
     }
-  }, [currentProvider, selectedModel, reasoningEffort]);
+  }, [codexFastMode, currentProvider, selectedModel, reasoningEffort]);
 
   /**
    * Execute message sending (from queue or directly)

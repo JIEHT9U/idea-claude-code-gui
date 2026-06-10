@@ -84,6 +84,8 @@ public class SessionState {
     private volatile String provider = "claude";
     // Reasoning effort (thinking depth). Null means "do not override SDK/settings".
     private volatile String reasoningEffort = null;
+    // Codex service tier: null = use Codex defaults, "fast" = Codex /fast.
+    private volatile String codexServiceTier = null;
 
     // Slash commands — volatile for cross-thread visibility (same reason as permissionMode/model/provider)
     private volatile List<String> slashCommands = new ArrayList<>();
@@ -146,6 +148,10 @@ public class SessionState {
 
     public String getReasoningEffort() {
         return reasoningEffort;
+    }
+
+    public String getCodexServiceTier() {
+        return codexServiceTier;
     }
 
     public String getRuntimeSessionEpoch() {
@@ -221,6 +227,10 @@ public class SessionState {
             return;
         }
         this.reasoningEffort = trimmed;
+    }
+
+    public void setCodexServiceTier(String codexServiceTier) {
+        this.codexServiceTier = codexServiceTier;
     }
 
     public void setRuntimeSessionEpoch(String runtimeSessionEpoch) {

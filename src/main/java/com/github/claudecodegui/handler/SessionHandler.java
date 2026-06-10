@@ -123,6 +123,7 @@ public class SessionHandler extends BaseMessageHandler {
         java.util.List<String> fileTagPaths = null;
         String requestedPermissionMode = null;
         String requestedReasoningEffort = null;
+        String requestedCodexFastMode = null;
         try {
             Gson gson = new Gson();
             JsonObject payload = gson.fromJson(content, JsonObject.class);
@@ -166,6 +167,10 @@ public class SessionHandler extends BaseMessageHandler {
             }
 
             requestedReasoningEffort = extractReasoningEffort(payload);
+
+            if (payload != null && payload.has("codexFastMode") && !payload.get("codexFastMode").isJsonNull()) {
+                requestedCodexFastMode = payload.get("codexFastMode").getAsString();
+            }
         } catch (Exception e) {
             // If parsing fails, treat content as plain text (backward compatibility)
             LOG.debug("[SessionHandler] Message is plain text, not JSON: " + e.getMessage());
@@ -177,6 +182,7 @@ public class SessionHandler extends BaseMessageHandler {
         final java.util.List<String> finalFileTagPaths = fileTagPaths;
         final String finalRequestedPermissionMode = requestedPermissionMode;
         final String finalRequestedReasoningEffort = requestedReasoningEffort;
+        final String finalRequestedCodexFastMode = requestedCodexFastMode;
 
         CompletableFuture.runAsync(() -> {
             String currentWorkingDir = determineWorkingDirectory();
@@ -195,7 +201,7 @@ public class SessionHandler extends BaseMessageHandler {
 
             // [FIX] Pass agent prompt and file tags directly to session
             context.getSession().send(finalPrompt, finalAgentPrompt, finalFileTagPaths,
-                            finalRequestedPermissionMode, finalRequestedReasoningEffort)
+                            finalRequestedPermissionMode, finalRequestedReasoningEffort, finalRequestedCodexFastMode)
                 .thenRun(() -> {
                     // Claude now triggers success on actual stream_end callback.
                     // Codex has no stream_end event, keep success trigger at completion.
@@ -254,6 +260,7 @@ public class SessionHandler extends BaseMessageHandler {
             String agentPrompt = null;
             String requestedPermissionMode = null;
             String requestedReasoningEffort = null;
+            String requestedCodexFastMode = null;
             if (payload != null && payload.has("agent") && !payload.get("agent").isJsonNull()) {
                 JsonObject agent = payload.getAsJsonObject("agent");
                 if (agent.has("prompt") && !agent.get("prompt").isJsonNull()) {
@@ -290,8 +297,12 @@ public class SessionHandler extends BaseMessageHandler {
 
             requestedReasoningEffort = extractReasoningEffort(payload);
 
+            if (payload != null && payload.has("codexFastMode") && !payload.get("codexFastMode").isJsonNull()) {
+                requestedCodexFastMode = payload.get("codexFastMode").getAsString();
+            }
+
             sendMessageWithAttachments(text, atts, agentPrompt, fileTagPaths, requestedPermissionMode,
-                    requestedReasoningEffort);
+                    requestedReasoningEffort, requestedCodexFastMode);
         } catch (Exception e) {
             LOG.error("[SessionHandler] 解析附件负载失败: " + e.getMessage(), e);
             handleSendMessage(content);
@@ -308,7 +319,8 @@ public class SessionHandler extends BaseMessageHandler {
         String agentPrompt,
         java.util.List<String> fileTagPaths,
         String requestedPermissionMode,
-        String requestedReasoningEffort
+        String requestedReasoningEffort,
+        String requestedCodexFastMode
     ) {
         // Version check (consistent with handleSendMessage)
         String nodeVersion = this.resolveNodeVersion();
@@ -331,6 +343,7 @@ public class SessionHandler extends BaseMessageHandler {
         final java.util.List<String> finalFileTagPaths = fileTagPaths;
         final String finalRequestedPermissionMode = requestedPermissionMode;
         final String finalRequestedReasoningEffort = requestedReasoningEffort;
+        final String finalRequestedCodexFastMode = requestedCodexFastMode;
 
         CompletableFuture.runAsync(() -> {
             String currentWorkingDir = determineWorkingDirectory();
@@ -348,7 +361,7 @@ public class SessionHandler extends BaseMessageHandler {
 
             // [FIX] Pass agent prompt and file tags directly to session
             context.getSession().send(prompt, attachments, finalAgentPrompt, finalFileTagPaths,
-                            finalRequestedPermissionMode, finalRequestedReasoningEffort)
+                            finalRequestedPermissionMode, finalRequestedReasoningEffort, finalRequestedCodexFastMode)
                 .thenRun(() -> {
                     // Claude now triggers success on actual stream_end callback.
                     // Codex has no stream_end event, keep success trigger at completion.

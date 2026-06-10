@@ -356,7 +356,7 @@ public class ClaudeSession {
      * requestedPermissionMode priority: payload > sessionMode > default.
      */
     public CompletableFuture<Void> send(String input, String agentPrompt, List<String> fileTagPaths, String requestedPermissionMode) {
-        return send(input, null, agentPrompt, fileTagPaths, requestedPermissionMode, null);
+        return send(input, null, agentPrompt, fileTagPaths, requestedPermissionMode, null, null);
     }
 
     /**
@@ -370,7 +370,23 @@ public class ClaudeSession {
             String requestedPermissionMode,
             String requestedReasoningEffort
     ) {
-        return send(input, null, agentPrompt, fileTagPaths, requestedPermissionMode, requestedReasoningEffort);
+        return send(input, null, agentPrompt, fileTagPaths, requestedPermissionMode, requestedReasoningEffort, null);
+    }
+
+    /**
+     * Send a message with a specific agent prompt, file tags, requested permission mode,
+     * requested reasoning effort, and Codex fast mode.
+     * The Codex fast mode maps to the official service tier used by Codex CLI /fast.
+     */
+    public CompletableFuture<Void> send(
+            String input,
+            String agentPrompt,
+            List<String> fileTagPaths,
+            String requestedPermissionMode,
+            String requestedReasoningEffort,
+            String requestedCodexFastMode
+    ) {
+        return send(input, null, agentPrompt, fileTagPaths, requestedPermissionMode, requestedReasoningEffort, requestedCodexFastMode);
     }
 
     /**
@@ -420,14 +436,15 @@ public class ClaudeSession {
             List<String> fileTagPaths,
             String requestedPermissionMode
     ) {
-        return send(input, attachments, agentPrompt, fileTagPaths, requestedPermissionMode, null);
+        return send(input, attachments, agentPrompt, fileTagPaths, requestedPermissionMode, null, null);
     }
 
     /**
      * Send a message with attachments, agent prompt, file tags, requested permission mode,
-     * and requested reasoning effort.
+     * requested reasoning effort, and Codex fast mode.
      * The effective mode is resolved with priority:
      * Priority: requestedPermissionMode > sessionMode > default.
+     * The Codex fast mode maps to the official service tier used by Codex CLI /fast.
      */
     public CompletableFuture<Void> send(
             String input,
@@ -435,7 +452,8 @@ public class ClaudeSession {
             String agentPrompt,
             List<String> fileTagPaths,
             String requestedPermissionMode,
-            String requestedReasoningEffort
+            String requestedReasoningEffort,
+            String requestedCodexFastMode
     ) {
         String normalizedInput = (input != null) ? input.trim() : "";
         Message userMessage = contextService.buildUserMessage(normalizedInput, attachments);
@@ -445,6 +463,7 @@ public class ClaudeSession {
         final List<String> finalFileTagPaths = fileTagPaths;
         final String finalRequestedPermissionMode = requestedPermissionMode;
         final String finalRequestedReasoningEffort = requestedReasoningEffort;
+        final String finalRequestedCodexFastMode = requestedCodexFastMode;
 
         return launchClaude().thenCompose(chId -> {
             sendService.prepareContextCollector(contextCollector);
@@ -458,7 +477,8 @@ public class ClaudeSession {
                             finalAgentPrompt,
                             finalFileTagPaths,
                             finalRequestedPermissionMode,
-                            finalRequestedReasoningEffort
+                            finalRequestedReasoningEffort,
+                            finalRequestedCodexFastMode
                     )
             ).thenCompose(v -> syncUserMessageUuidsAfterSend());
         }).exceptionally(ex -> {
@@ -642,6 +662,21 @@ public class ClaudeSession {
      */
     public String getReasoningEffort() {
         return state.getReasoningEffort();
+    }
+
+    /**
+     * Set the Codex service tier. Null means use Codex defaults; "fast" matches Codex CLI /fast.
+     */
+    public void setCodexServiceTier(String serviceTier) {
+        state.setCodexServiceTier(serviceTier);
+        LOG.info("Codex service tier updated to: " + (serviceTier != null ? serviceTier : "standard"));
+    }
+
+    /**
+     * Get the Codex service tier.
+     */
+    public String getCodexServiceTier() {
+        return state.getCodexServiceTier();
     }
 
     /**

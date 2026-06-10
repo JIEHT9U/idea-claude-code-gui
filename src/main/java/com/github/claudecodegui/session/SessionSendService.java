@@ -19,6 +19,7 @@ import java.util.concurrent.CompletableFuture;
 public class SessionSendService {
 
     private static final Logger LOG = Logger.getInstance(SessionSendService.class);
+    public static final String CODEX_FAST_SERVICE_TIER = "fast";
 
     private final Project project;
     private final SessionState state;
@@ -86,7 +87,8 @@ public class SessionSendService {
             String externalAgentPrompt,
             List<String> fileTagPaths,
             String requestedPermissionMode,
-            String requestedReasoningEffort
+            String requestedReasoningEffort,
+            String requestedCodexFastMode
     ) {
         String agentPrompt = externalAgentPrompt;
         if (agentPrompt == null) {
@@ -115,6 +117,10 @@ public class SessionSendService {
         String normalizedRequestedEffort = normalizeRequestedReasoningEffort(requestedReasoningEffort);
 
         if ("codex".equals(currentProvider)) {
+            String effectiveCodexServiceTier = resolveEffectiveCodexServiceTier(
+                    requestedCodexFastMode,
+                    state.getCodexServiceTier()
+            );
             return sendToCodex(
                     channelId,
                     input,
@@ -123,7 +129,8 @@ public class SessionSendService {
                     agentPrompt,
                     fileTagPaths,
                     effectivePermissionMode,
-                    normalizedRequestedEffort
+                    normalizedRequestedEffort,
+                    effectiveCodexServiceTier
             );
         }
 
@@ -184,6 +191,51 @@ public class SessionSendService {
         return ClaudeCodeGuiBundle.message("error.codexLocalAccessNotAuthorized");
     }
 
+    public static String normalizeRequestedCodexServiceTier(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        if ("fast".equalsIgnoreCase(trimmed) || "priority".equalsIgnoreCase(trimmed)) {
+            return CODEX_FAST_SERVICE_TIER;
+        }
+        if ("normal".equalsIgnoreCase(trimmed)
+                || "standard".equalsIgnoreCase(trimmed)
+                || "default".equalsIgnoreCase(trimmed)
+                || "none".equalsIgnoreCase(trimmed)) {
+            return null;
+        }
+        LOG.warn("[Codex] Invalid fast mode/service tier ignored: " + value);
+        return null;
+    }
+
+    public static String resolveEffectiveCodexServiceTier(String requestedValue, String sessionValue) {
+        String requested = normalizeRequestedCodexServiceTier(requestedValue);
+        if (requested != null) {
+            return requested;
+        }
+        if (isExplicitCodexStandardMode(requestedValue)) {
+            return null;
+        }
+
+        String session = normalizeRequestedCodexServiceTier(sessionValue);
+        return session;
+    }
+
+    public static boolean isExplicitCodexStandardMode(String value) {
+        if (value == null) {
+            return false;
+        }
+        String trimmed = value.trim();
+        return "normal".equalsIgnoreCase(trimmed)
+                || "standard".equalsIgnoreCase(trimmed)
+                || "default".equalsIgnoreCase(trimmed)
+                || "none".equalsIgnoreCase(trimmed);
+    }
+
     private CompletableFuture<Void> sendToCodex(
             String channelId,
             String input,
@@ -192,7 +244,8 @@ public class SessionSendService {
             String agentPrompt,
             List<String> fileTagPaths,
             String effectivePermissionMode,
-            String requestedReasoningEffort
+            String requestedReasoningEffort,
+            String effectiveCodexServiceTier
     ) {
         CodexMessageHandler handler = new CodexMessageHandler(state, callbackFacade.getCallbackHandler());
         String accessMode = CodemossSettingsService.CODEX_RUNTIME_ACCESS_INACTIVE;
@@ -221,6 +274,7 @@ public class SessionSendService {
                 state.getModel(),
                 agentPrompt,
                 requestedReasoningEffort != null ? requestedReasoningEffort : state.getReasoningEffort(),
+                effectiveCodexServiceTier,
                 handler
         ).thenApply(result -> null);
     }
