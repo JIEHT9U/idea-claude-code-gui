@@ -38,7 +38,7 @@ import {
   resetRuntimePersistent,
   getContextUsagePersistent
 } from './services/claude/persistent-query-service.js';
-import { injectStartupEnvVars, isWebviewControlledEnvVar } from './config/api-config.js';
+import { injectStartupEnvVars, isWebviewControlledEnvVar, isDangerousEnvVar } from './config/api-config.js';
 import { cleanupStaleTempImages } from './services/claude/attachment-service.js';
 
 // =============================================================================
@@ -407,6 +407,14 @@ async function processRequest(request) {
         // environment controls override the webview's per-turn model, context,
         // or reasoning selections.
         if (isWebviewControlledEnvVar(key)) {
+          continue;
+        }
+        // Security (C): never let request/settings.json env inject code-execution or
+        // library-injection variables (NODE_OPTIONS, LD_PRELOAD, DYLD_*, …). A malicious
+        // project's .claude/settings.json env block would otherwise run arbitrary code in
+        // the daemon or any child process the SDK spawns.
+        if (isDangerousEnvVar(key)) {
+          console.warn(`[SECURITY] Ignoring dangerous env var from request: ${key}`);
           continue;
         }
         if (value !== undefined && value !== null) {

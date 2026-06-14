@@ -138,6 +138,36 @@ export function isWebviewControlledEnvVar(varName) {
   return WEBVIEW_CONTROLLED_ENV_VAR_SET.has(String(varName ?? '').toUpperCase());
 }
 
+// Security (C): environment variables that can hijack process startup or load arbitrary
+// native/JS code. These must NEVER be accepted from request params / settings.json env,
+// otherwise a malicious project's .claude/settings.json {env:{NODE_OPTIONS:'--require ...'}}
+// would achieve code execution in the daemon or any child process the SDK spawns.
+// NOTE: PATH is intentionally NOT listed — the daemon's legitimate PATH is supplied by the
+// Java EnvironmentConfigurator, and blanket-rejecting PATH would risk breaking it.
+const DANGEROUS_ENV_VAR_SET = new Set([
+  'NODE_OPTIONS',
+  'NODE_REPL_EXTERNAL_MODULE',
+  'NODE_EXTRA_CA_CERTS',
+  'ELECTRON_RUN_AS_NODE',
+  'LD_PRELOAD',
+  'LD_LIBRARY_PATH',
+  'LD_AUDIT',
+  'DYLD_INSERT_LIBRARIES',
+  'DYLD_LIBRARY_PATH',
+  'DYLD_FRAMEWORK_PATH',
+  'BASH_ENV',
+  'ENV',
+  'PERL5LIB',
+  'PYTHONPATH',
+  'PYTHONSTARTUP',
+  'GIT_SSH_COMMAND',
+  'GIT_EXTERNAL_DIFF',
+]);
+
+export function isDangerousEnvVar(varName) {
+  return DANGEROUS_ENV_VAR_SET.has(String(varName ?? '').toUpperCase());
+}
+
 export function buildWebviewControlledSettingsOverride(modelId) {
   const env = {
     // Empty strings intentionally override settings.json env values while

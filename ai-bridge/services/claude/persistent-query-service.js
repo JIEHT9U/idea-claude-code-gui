@@ -140,6 +140,10 @@ function buildQueryOptions(workingDirectory, sdkModelName, permissionMode, maxTh
     ),
     canUseTool,
     settingSources: ['user', 'project', 'local'],
+    // bypassPermissions requires this flag per SDK contract (sdk.d.ts: "Must be set to
+    // true when using permissionMode: 'bypassPermissions'"). Without it a future SDK
+    // version could silently drop bypass and change permission behavior.
+    ...(permissionMode === 'bypassPermissions' && { allowDangerouslySkipPermissions: true }),
     ...(mcpServers && { mcpServers }),
     ...(claudeCliOverride && { pathToClaudeCodeExecutable: claudeCliOverride }),
     systemPrompt: {

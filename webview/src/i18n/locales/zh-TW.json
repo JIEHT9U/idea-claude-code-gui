@@ -798,6 +798,7 @@
     "dialogTitle": "權限請求",
     "allow": "允許一次",
     "allowAlways": "總是允許",
+    "allowAlwaysCommand": "總是允許此命令",
     "deny": "拒絕",
     "userDenied": "使用者拒絕了權限請求",
     "fromExternalProcess": "來自外部處理程序的請求",

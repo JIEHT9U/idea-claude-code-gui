@@ -384,7 +384,7 @@
     "codexPermissionsDesc": "Manage Codex permissions and sandbox policies",
     "permissionsPanel": {
       "codexSandboxTitle": "Codex Sandbox Mode",
-      "codexSandboxDesc": "Control system access boundaries when Codex executes commands. Defaults to danger-full-access. Switch to workspace-write for stricter sandboxing.",
+      "codexSandboxDesc": "Control system access boundaries when Codex executes commands. Defaults to the safer workspace-write (read/write within the workspace only). Switch to danger-full-access for system-level commands such as adb or docker.",
       "workspaceWriteTitle": "workspace-write",
       "workspaceWriteDesc": "Read/write is limited to the workspace. System-level operations are restricted for safety.",
       "fullAccessTitle": "danger-full-access",
@@ -971,6 +971,7 @@
     "dialogTitle": "Permission Request",
     "allow": "Allow Once",
     "allowAlways": "Always Allow",
+    "allowAlwaysCommand": "Always Allow This Command",
     "deny": "Deny",
     "userDenied": "User denied the permission request",
     "fromExternalProcess": "Request from external process",

@@ -798,6 +798,7 @@
     "dialogTitle": "権限リクエスト",
     "allow": "1回のみ許可",
     "allowAlways": "常に許可",
+    "allowAlwaysCommand": "このコマンドを常に許可",
     "deny": "拒否",
     "userDenied": "ユーザーが権限リクエストを拒否しました",
     "fromExternalProcess": "外部プロセスからのリクエスト",

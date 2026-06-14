@@ -378,7 +378,7 @@ public class SessionLifecycleManager {
      */
     public void sendCurrentPermissionMode() {
         try {
-            String currentMode = "bypassPermissions";
+            String currentMode = "default";
 
             ClaudeSession currentSession = host.getSession();
             if (currentSession != null) {

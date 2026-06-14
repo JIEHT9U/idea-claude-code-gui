@@ -346,7 +346,7 @@
     },
     "permissionsPanel": {
       "codexSandboxTitle": "Codex 샌드박스 모드",
-      "codexSandboxDesc": "Codex가 명령을 실행할 때의 시스템 접근 범위를 제어합니다. 기본값은 danger-full-access입니다. 더 엄격한 샌드박스를 위해 workspace-write로 전환하세요.",
+      "codexSandboxDesc": "Codex가 명령을 실행할 때의 시스템 접근 범위를 제어합니다. 기본값은 더 안전한 workspace-write(작업 영역 내 읽기/쓰기만 허용)입니다. adb, docker 등 시스템 수준 명령이 필요하면 danger-full-access로 전환하세요.",
       "workspaceWriteTitle": "workspace-write",
       "workspaceWriteDesc": "읽기/쓰기가 워크스페이스로 제한됩니다. 안전을 위해 시스템 수준 작업이 제한됩니다.",
       "fullAccessTitle": "danger-full-access",
@@ -909,6 +909,7 @@
     "dialogTitle": "권한 요청",
     "allow": "한 번 허용",
     "allowAlways": "항상 허용",
+    "allowAlwaysCommand": "이 명령 항상 허용",
     "deny": "거부",
     "userDenied": "사용자가 권한 요청을 거부했습니다",
     "fromExternalProcess": "외부 프로세스의 요청",
