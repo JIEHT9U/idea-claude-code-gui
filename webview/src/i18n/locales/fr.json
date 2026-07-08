@@ -821,7 +821,6 @@
     "dialogTitle": "Demande de permission",
     "allow": "Autoriser une fois",
     "allowAlways": "Toujours autoriser",
-    "allowAlwaysCommand": "Toujours autoriser cette commande",
     "deny": "Refuser",
     "userDenied": "L'utilisateur a refusé la demande de permission",
     "fromExternalProcess": "Demande du processus externe",

@@ -999,7 +999,6 @@
     "dialogTitle": "Permission Request",
     "allow": "Allow Once",
     "allowAlways": "Always Allow",
-    "allowAlwaysCommand": "Always Allow This Command",
     "deny": "Deny",
     "userDenied": "User denied the permission request",
     "fromExternalProcess": "Request from external process",

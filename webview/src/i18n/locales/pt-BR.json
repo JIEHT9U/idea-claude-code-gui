@@ -990,7 +990,6 @@
     "dialogTitle": "Solicitação de Permissão",
     "allow": "Permitir Uma Vez",
     "allowAlways": "Sempre Permitir",
-    "allowAlwaysCommand": "Sempre Permitir Este Comando",
     "deny": "Negar",
     "userDenied": "Usuário negou a solicitação de permissão",
     "fromExternalProcess": "Solicitação de processo externo",

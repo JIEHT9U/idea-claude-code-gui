@@ -1004,7 +1004,6 @@
     "dialogTitle": "权限请求",
     "allow": "允许一次",
     "allowAlways": "总是允许",
-    "allowAlwaysCommand": "总是允许此命令",
     "deny": "拒绝",
     "userDenied": "用户拒绝了权限请求",
     "fromExternalProcess": "来自外部进程的请求",

@@ -278,12 +278,32 @@ export function createPreToolUseHook(permissionModeState, cwd = null, onModeChan
     }
 
     // ======== DEFAULT MODE ========
-    // Default mode yields to the SDK's native flow: settings.json allow/deny rules are
-    // evaluated first, and anything not matched falls through to our canUseTool / Java
-    // approval dialog (whose "Always allow" is remembered at tool level). This restores the
-    // v0.4.5 behavior — a user-configured settings.json allow-rule is honored, and a single
-    // "Always allow" is not re-prompted every turn. (Reverts the v0.4.6 hardening that
-    // force-'ask'ed Bash/Agent and broke both of those for normal users.)
+    // Safe/read-only tools yield to the SDK so deny rules (for example Read(./.env))
+    // still apply; an allow-rule for a read-only tool is harmless.
+    //
+    // Tools with side effects return 'ask'. A no-opinion yield WOULD fall through to
+    // canUseTool for unmatched tools, but it would also let a settings.json allow-rule
+    // auto-approve them first — and settingSources includes 'project' and 'local', whose
+    // .claude/settings.json is attacker-controllable when a user opens a malicious repo.
+    // Hook 'ask' takes precedence over allow-rules, closing that silent-auto-approve path.
+    // Trade-offs, accepted deliberately: a legitimate user-configured allow-rule for e.g.
+    // Bash is also not honored (the user confirms once per tool per conversation instead,
+    // via the Java-side tool-level "Always allow" memory), and every side-effect call pays
+    // one file-IPC round trip even on a memory hit.
+    if (currentPermissionMode === 'default') {
+      const isReadOnlyMcp = toolName?.startsWith('mcp__')
+        && !toolName.includes('Write') && !toolName.includes('Edit');
+      if (SAFE_ALWAYS_ALLOW_TOOLS.has(toolName) || isReadOnlyMcp) {
+        return YIELD_TO_SDK;
+      }
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'ask',
+          permissionDecisionReason: 'Default mode: settings.json allow-rules are not honored for tools with side effects; explicit confirmation required.'
+        }
+      };
+    }
 
     // ======== acceptEdits MODE ========
     // acceptEdits auto-accepts FILE EDITS only. Command execution (Bash) and sub-agent

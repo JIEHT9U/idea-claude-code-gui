@@ -17,18 +17,28 @@ function makeHook(mode = 'default', cwd = '/tmp/test-cwd') {
   };
 }
 
-test('default mode: Bash yields "continue" so settings.json allow-rules and the tool-level "Always allow" memory are honored', async () => {
+test('default mode: Bash returns "ask" so settings.json allow-rules cannot silently approve commands', async () => {
   const hook = makeHook('default');
   const result = await hook({
     tool_name: 'Bash',
     tool_input: { command: 'rm something.txt' },
   });
-  // v0.4.7: default mode no longer force-'ask's Bash/Agent (reverts the v0.4.6 (B)(E)
-  // hardening that broke normal users). It yields to the SDK so a user-configured
-  // settings.json allow-rule is honored; anything unmatched falls through to canUseTool /
-  // the Java approval dialog, whose "Always allow" is remembered at tool level — restoring
-  // the v0.4.5 "confirm once" behavior.
-  assert.equal(result?.continue, true);
+  // Hook 'ask' takes precedence over settings.json allow-rules. This is deliberate:
+  // settingSources includes 'project' and 'local', whose .claude/settings.json is
+  // attacker-controllable when a malicious repo is opened, so a yield here would let
+  // such an allow-rule auto-run Bash silently. The 'ask' path emits the can_use_tool
+  // control request, which reaches canUseTool -> the Java dialog, whose "Always allow"
+  // is remembered at tool level (confirm once per tool per conversation).
+  assert.equal(result?.hookSpecificOutput?.permissionDecision, 'ask');
+});
+
+test('default mode: Write returns "ask" so unmatched writes reach canUseTool / Java permissions', async () => {
+  const hook = makeHook('default');
+  const result = await hook({
+    tool_name: 'Write',
+    tool_input: { file_path: '/tmp/test-cwd/out.txt', content: 'hello' },
+  });
+  assert.equal(result?.hookSpecificOutput?.permissionDecision, 'ask');
 });
 
 test('default mode: Read yields "continue" so deny rules like Read(./.env) can fire', async () => {
@@ -47,6 +57,17 @@ test('default mode: Grep yields "continue"', async () => {
     tool_input: { pattern: 'foo' },
   });
   assert.equal(result?.continue, true);
+});
+
+test('default mode: read-only helper tools (BashOutput, NotebookRead) yield "continue" instead of prompting', async () => {
+  const hook = makeHook('default');
+  for (const [toolName, toolInput] of [
+    ['BashOutput', { bash_id: 'shell-1' }],
+    ['NotebookRead', { notebook_path: '/tmp/test-cwd/nb.ipynb' }],
+  ]) {
+    const result = await hook({ tool_name: toolName, tool_input: toolInput });
+    assert.equal(result?.continue, true, `expected ${toolName} to yield to the SDK`);
+  }
 });
 
 test('bypassPermissions mode: Bash yields "continue" (SDK mode-check auto-allows)', async () => {
